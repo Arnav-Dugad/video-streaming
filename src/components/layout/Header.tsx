@@ -5,8 +5,8 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useMotionValueEvent, useScroll } from 'motion/react';
 import {
-  Bookmark, Clock, Command, Compass, Flame, LogOut, Menu, Search, Settings,
-  Sparkles, TvMinimalPlay, User as UserIcon, X, Users,
+  BarChart3, Bookmark, Clock, Command, Compass, Flame, LogOut, Menu, Search,
+  Settings, Sparkles, TvMinimalPlay, User as UserIcon, X, Users,
 } from 'lucide-react';
 
 import { Logo } from './Logo';
@@ -177,6 +177,7 @@ export function Header() {
                         <div className="p-1.5">
                           <MenuLink href="/library" icon={Bookmark}>Library</MenuLink>
                           <MenuLink href="/library?tab=history" icon={Clock}>History</MenuLink>
+                          <MenuLink href="/insights" icon={BarChart3}>Your insights</MenuLink>
                           <MenuLink href="/rooms" icon={TvMinimalPlay}>Watch parties</MenuLink>
                           <MenuLink href="/profile" icon={Settings}>Settings</MenuLink>
                         </div>
