@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, ViewTransition } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Bookmark, BookmarkCheck, Clock, ListPlus, Radio, Share2 } from 'lucide-react';
 
@@ -136,6 +136,12 @@ export function VideoCard({
       transition={{ type: 'spring', stiffness: 320, damping: 26 }}
     >
       <Link href={href} onClick={() => onSelect?.(video)} className="block" data-cursor="Watch">
+        {/* Shared element. The same name is on the watch page's player slot,
+            so the artwork morphs into the player position instead of the two
+            pages simply swapping. `default="none"` keeps it from animating
+            during every unrelated navigation; with it set, `share` has to be
+            explicit or the pair silently stops morphing. */}
+        <ViewTransition name={`video-${video.id}`} share="morph" default="none">
         <div
           className={cn(
             'relative aspect-video w-full overflow-hidden rounded-card bg-ink-800',
@@ -210,6 +216,7 @@ export function VideoCard({
 
           {pct > 0 && <ProgressRule pct={pct} tall />}
         </div>
+        </ViewTransition>
       </Link>
 
       <div className="mt-3 flex gap-3">

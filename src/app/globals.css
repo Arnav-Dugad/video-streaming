@@ -303,11 +303,54 @@
 .range-flare:hover::-webkit-slider-thumb { transform: scale(1.25); }
 
 /* ==========================================================================
+   View transitions
+
+   The thumbnail-to-player morph. Browsers without the View Transitions API
+   simply navigate — nothing here is required for the app to work.
+   ========================================================================== */
+
+::view-transition-group(.morph) {
+  /* Long enough to read as one object moving, short enough to stay direct. */
+  animation-duration: 380ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+::view-transition-image-pair(.morph) {
+  animation-name: morph-blur;
+}
+
+/* A touch of blur mid-flight hides the pixel interpolation between two
+   images at very different scales. */
+@keyframes morph-blur {
+  30% { filter: blur(4px); }
+}
+
+/* The player is position:fixed and persists across navigation. Naming it
+   keeps it out of the root snapshot, which would otherwise capture it into
+   both the outgoing and incoming frames and ghost it mid-transition. */
+.player-host {
+  view-transition-name: prism-player;
+}
+
+::view-transition-group(prism-player) {
+  animation: none;
+}
+
+/* ==========================================================================
    Reduced motion — honour it properly, don't just blanket-kill animation
    ========================================================================== */
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
+
+  /* Skip the morph entirely rather than running it instantly — a 1ms view
+     transition still flashes a snapshot layer. */
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;

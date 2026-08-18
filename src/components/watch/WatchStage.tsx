@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, ViewTransition } from 'react';
 import { usePlayerSlot } from '@/hooks/usePlayerSlot';
 import { usePlayer } from '@/lib/store';
 import { useAuth } from '@/components/providers/AuthProvider';
@@ -57,12 +57,14 @@ export function WatchStage({ video, upNext, startAt }: Props) {
   }, [video.id, user, loading, startAt]);
 
   return (
-    <div
-      ref={ref}
-      className="relative aspect-video w-full overflow-hidden rounded-card bg-black ring-1 ring-inset ring-cream/[0.06]"
-      // The host paints over this; keep it as a matching placeholder so there
-      // is never a flash of page background underneath during the flight.
-      aria-label="Video player"
-    />
+    <ViewTransition name={`video-${video.id}`} share="morph" default="none">
+      <div
+        ref={ref}
+        className="relative aspect-video w-full overflow-hidden rounded-card bg-black ring-1 ring-inset ring-cream/[0.06]"
+        // The host paints over this; keep it as a matching placeholder so there
+        // is never a flash of page background underneath during the flight.
+        aria-label="Video player"
+      />
+    </ViewTransition>
   );
 }

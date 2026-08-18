@@ -329,7 +329,9 @@ export function PlayerHost() {
       <motion.div
         style={{ top, left, width, height, borderRadius: radius }}
         className={cn(
-          'fixed z-[80] overflow-hidden bg-black',
+          // `player-host` gives it its own view-transition-name so it is not
+          // captured into the root snapshot and ghosted during a morph.
+          'player-host fixed z-[80] overflow-hidden bg-black',
           docked && 'shadow-float ring-1 ring-line-strong',
         )}
         onMouseEnter={() => setDockHover(true)}
