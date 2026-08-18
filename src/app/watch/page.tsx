@@ -101,7 +101,7 @@ export default async function WatchPage({ searchParams }: { searchParams: Search
           </div>
 
           <div className="mt-10 max-w-3xl">
-            <Comments comments={comments.items} total={video.commentCount} />
+            <Comments comments={comments.items} total={video.commentCount} videoId={video.id} />
           </div>
         </div>
 

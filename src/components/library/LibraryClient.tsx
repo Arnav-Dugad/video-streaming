@@ -22,6 +22,7 @@ import { GridSkeleton } from '@/components/ui/Skeleton';
 import { formatDuration, timeAgo, pluralise } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { toast } from '@/lib/store';
+import { YouTubeSubscriptions } from './YouTubeSubscriptions';
 
 /* ==========================================================================
    Library.
@@ -210,7 +211,14 @@ export function LibraryClient() {
           />
         )}
 
-        {tab === 'following' && <Following items={following} />}
+        {tab === 'following' && (
+          <>
+            <Following items={following} />
+            {following !== null && (
+              <YouTubeSubscriptions uid={user.uid} alreadyFollowing={following} onImported={load} />
+            )}
+          </>
+        )}
       </section>
     </>
   );

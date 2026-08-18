@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'motion/react';
 import { Check, Keyboard, Loader2, LogOut, Sparkles } from 'lucide-react';
@@ -14,6 +14,7 @@ import { formatDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { toast, useUI, usePlayer } from '@/lib/store';
 import { qualityLabel } from '@/lib/player-modules';
+import { YouTubeConnection } from './YouTubeConnection';
 import type { UserProfile } from '@/lib/types';
 
 /** Offered up front rather than read from the player, since this page is not
@@ -235,6 +236,15 @@ function ProfileForm({ profile, uid }: { profile: UserProfile; uid: string }) {
             >
               <Keyboard className="h-4 w-4" /> View keyboard shortcuts
             </button>
+          </Section>
+
+          <Section
+            title="YouTube account"
+            description="Optional. Connect one to comment and subscribe on YouTube itself — your PRISM library works either way."
+          >
+            <Suspense fallback={<div className="h-10 w-40 skeleton rounded-xl" />}>
+              <YouTubeConnection />
+            </Suspense>
           </Section>
         </div>
       </div>

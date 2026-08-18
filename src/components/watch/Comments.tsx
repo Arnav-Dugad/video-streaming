@@ -7,27 +7,37 @@ import { ArrowUpDown, MessageSquare, ThumbsUp } from 'lucide-react';
 import { Avatar } from '@/components/ui/Avatar';
 import { compactNumber, timeAgo } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { CommentComposer } from './CommentComposer';
 import type { Comment } from '@/lib/types';
 
 /** Read-only. Posting a comment requires an OAuth-authorised YouTube account,
  *  which is a different consent model from signing in to PRISM — so the UI
  *  says so plainly instead of showing a box that cannot work. */
-export function Comments({ comments, total }: { comments: Comment[]; total?: number }) {
+export function Comments({
+  comments, total, videoId,
+}: { comments: Comment[]; total?: number; videoId: string }) {
   const [order, setOrder] = useState<'top' | 'new'>('top');
   const [expanded, setExpanded] = useState(false);
+  /** Comments posted in this session, shown above the fetched list — the API's
+   *  own listing lags behind a new comment by minutes. */
+  const [posted, setPosted] = useState<Comment[]>([]);
 
-  const sorted = [...comments].sort((a, b) =>
+  const all = [...posted, ...comments];
+  const sorted = [...all].sort((a, b) =>
     order === 'top'
       ? b.likeCount - a.likeCount
       : new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime(),
   );
   const visible = expanded ? sorted : sorted.slice(0, 8);
 
-  if (comments.length === 0) {
+  if (all.length === 0) {
     return (
-      <section className="rounded-2xl border border-line px-5 py-10 text-center">
-        <MessageSquare className="mx-auto h-5 w-5 text-faint" />
-        <p className="mt-3 text-[13px] text-muted">Comments are turned off for this video.</p>
+      <section className="space-y-5" aria-label="Comments">
+        <CommentComposer videoId={videoId} onPosted={(c) => setPosted((p) => [c, ...p])} />
+        <div className="rounded-2xl border border-line px-5 py-10 text-center">
+          <MessageSquare className="mx-auto h-5 w-5 text-faint" />
+          <p className="mt-3 text-[13px] text-muted">No comments here yet.</p>
+        </div>
       </section>
     );
   }
@@ -36,7 +46,7 @@ export function Comments({ comments, total }: { comments: Comment[]; total?: num
     <section aria-label="Comments">
       <header className="mb-5 flex items-center justify-between gap-4">
         <h2 className="text-[15px] font-medium text-cream">
-          {compactNumber(total ?? comments.length)} comments
+          {compactNumber((total ?? comments.length) + posted.length)} comments
         </h2>
         <button
           onClick={() => setOrder((o) => (o === 'top' ? 'new' : 'top'))}
@@ -46,6 +56,10 @@ export function Comments({ comments, total }: { comments: Comment[]; total?: num
           {order === 'top' ? 'Top first' : 'Newest first'}
         </button>
       </header>
+
+      <div className="mb-7">
+        <CommentComposer videoId={videoId} onPosted={(c) => setPosted((p) => [c, ...p])} />
+      </div>
 
       <ul className="space-y-5">
         {visible.map((c, i) => (
@@ -91,7 +105,7 @@ export function Comments({ comments, total }: { comments: Comment[]; total?: num
       )}
 
       <p className="mt-5 text-center text-[11.5px] text-faint">
-        Comments are read from YouTube. Replying needs a YouTube account connected directly.
+        Comments are read from YouTube and posted straight back to it.
       </p>
     </section>
   );

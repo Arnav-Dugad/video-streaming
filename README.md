@@ -90,6 +90,10 @@ position, so latency does not accumulate.
 - Real-time synced playback with drift correction
 - Chat pinned to the second of the video it was sent at
 
+**Installable**
+- Web app manifest, maskable icons, and an offline page
+- A deliberately narrow service worker: `/api/` is never cached, navigations are network-first so deploys land immediately, and it never calls `skipWaiting` on its own initiative
+
 **Interface**
 - `⌘K` command palette — search and navigation in one surface, keyboard-first, with racing suggestion and result requests
 - Hover-preview playback on every card, delayed 620ms so crossing a grid does not spawn a dozen iframes
@@ -122,6 +126,27 @@ costs 1 — so PRISM prefers `videos.list` wherever it can and caches
 aggressively. You can list **several comma-separated keys** from different
 projects; it rotates to the next one when a key is exhausted, and falls back to
 the seeded catalogue if they all are.
+
+### YouTube OAuth — optional
+
+Only needed for posting real comments, subscribing on YouTube itself, and
+importing a viewer's real subscriptions. Everything else works without it, and
+the UI hides these features entirely when it is not configured.
+
+1. Same Google Cloud project → configure the **OAuth consent screen** (External)
+2. Add the scopes `youtube.readonly` and `youtube.force-ssl`
+3. **Credentials → Create credentials → OAuth client ID → Web application**
+4. Add the redirect URI exactly: `https://your-domain/api/youtube/callback`
+   (and `http://localhost:3000/api/youtube/callback` for local work)
+5. Set `YOUTUBE_OAUTH_CLIENT_ID` and `YOUTUBE_OAUTH_CLIENT_SECRET`
+
+Both scopes are **sensitive** in Google's classification. Until the project
+passes their verification review it is capped at 100 users and each one sees an
+"unverified app" interstitial during consent — which is exactly why connecting
+is opt-in from settings rather than part of signing in.
+
+Tokens never reach the browser. They live in httpOnly cookies, are read only
+server-side, and the callback is CSRF-protected with a single-use `state` value.
 
 ### Firebase — accounts, library, watch parties
 
