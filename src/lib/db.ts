@@ -7,7 +7,9 @@ import {
 } from 'firebase/firestore';
 
 import { db } from './firebase';
-import type { HistoryEntry, Playlist, Room, RoomMessage, SavedVideo, UserProfile, Video } from './types';
+import type {
+  HistoryEntry, Playlist, Room, RoomMessage, RoomQueueItem, SavedVideo, UserProfile, Video,
+} from './types';
 
 /* ==========================================================================
    Firestore access layer.
@@ -392,6 +394,71 @@ export async function setRoomVideo(roomId: string, video: Video): Promise<void> 
     playing: true,
     updatedAt: Date.now(),
   });
+}
+
+/* ------------------------------ room queue ------------------------------ */
+
+export function roomQueueItem(
+  video: Video,
+  addedBy: { uid: string; name: string },
+): RoomQueueItem {
+  return {
+    videoId: video.id,
+    title: video.title,
+    thumbnail: video.thumbnail || video.thumbnailHq,
+    channelTitle: video.channelTitle,
+    durationSeconds: video.durationSeconds ?? 0,
+    addedByUid: addedBy.uid,
+    addedByName: addedBy.name,
+    addedAt: Date.now(),
+  };
+}
+
+/** Anyone in the room may queue something; only the host may play or remove.
+ *  arrayUnion would silently drop a repeat, so duplicates are filtered here
+ *  against the current document instead. */
+export async function addToRoomQueue(roomId: string, item: RoomQueueItem): Promise<boolean> {
+  const ref = doc(store(), 'rooms', roomId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return false;
+
+  const current = (snap.data().queue as RoomQueueItem[] | undefined) ?? [];
+  if (current.some((q) => q.videoId === item.videoId)) return false;
+  if (snap.data().videoId === item.videoId) return false;
+
+  await updateDoc(ref, { queue: [...current, item].slice(0, 50) });
+  return true;
+}
+
+export async function removeFromRoomQueue(roomId: string, videoId: string): Promise<void> {
+  const ref = doc(store(), 'rooms', roomId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const current = (snap.data().queue as RoomQueueItem[] | undefined) ?? [];
+  await updateDoc(ref, { queue: current.filter((q) => q.videoId !== videoId) });
+}
+
+/** Pulls the next item off the queue and makes it the room's video. One write,
+ *  so guests never observe a room with no video playing. */
+export async function advanceRoomQueue(roomId: string): Promise<RoomQueueItem | null> {
+  const ref = doc(store(), 'rooms', roomId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+
+  const current = (snap.data().queue as RoomQueueItem[] | undefined) ?? [];
+  const [next, ...rest] = current;
+  if (!next) return null;
+
+  await updateDoc(ref, {
+    videoId: next.videoId,
+    videoTitle: next.title,
+    videoThumbnail: next.thumbnail,
+    positionSeconds: 0,
+    playing: true,
+    updatedAt: Date.now(),
+    queue: rest,
+  });
+  return next;
 }
 
 export async function listPublicRooms(max = 24): Promise<Room[]> {

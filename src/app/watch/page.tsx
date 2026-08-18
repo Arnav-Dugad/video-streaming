@@ -26,8 +26,17 @@ export async function generateMetadata({ searchParams }: { searchParams: SearchP
     openGraph: {
       title: video.title,
       description: video.description.slice(0, 180),
-      images: [{ url: video.thumbnailHq || video.thumbnail, width: 1280, height: 720 }],
+      // A generated card rather than the raw thumbnail: it carries the title,
+      // channel and duration, so a shared link reads as a link to *this*
+      // video rather than an untitled still.
+      images: [{ url: `/api/og?v=${video.id}`, width: 1200, height: 630, alt: video.title }],
       type: 'video.other',
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: video.title,
+      description: video.description.slice(0, 180),
+      images: [`/api/og?v=${video.id}`],
     },
   };
 }

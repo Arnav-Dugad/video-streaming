@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  Bookmark, BookmarkCheck, Check, Link2, ListPlus, Plus, Share2, ThumbsUp, Users,
+  Bookmark, BookmarkCheck, Check, Clock3, Link2, ListPlus, Plus, Share2,
+  ThumbsUp, Users,
 } from 'lucide-react';
 
 import { Avatar } from '@/components/ui/Avatar';
@@ -14,7 +15,8 @@ import {
   addToPlaylist, createPlaylist, isInCollection, isSubscribed, listPlaylists,
   toggleInCollection, toggleSubscription, createRoom,
 } from '@/lib/db';
-import { compactNumber, subscriberLabel } from '@/lib/format';
+import { compactNumber, formatDuration, subscriberLabel } from '@/lib/format';
+import { usePlayer } from '@/lib/store';
 import { cn } from '@/lib/cn';
 import { toast } from '@/lib/store';
 import type { Channel, Playlist, Video } from '@/lib/types';
@@ -24,9 +26,15 @@ export function WatchActions({ video, channel }: { video: Video; channel: Channe
   const { user } = useAuth();
   const router = useRouter();
 
+  // Offering a timestamped link only makes sense while this video is the one
+  // actually playing, and only once it is far enough in to be worth pointing at.
+  const position = usePlayer((s) => s.position);
+  const isCurrent = usePlayer((s) => s.video?.id === video.id);
+
   const [flags, setFlags] = useState({ liked: false, saved: false, subscribed: false });
   const [copied, setCopied] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   // Reflect existing state on load so the buttons are never lying.
@@ -82,14 +90,20 @@ export function WatchActions({ video, channel }: { video: Video; channel: Channe
     } catch { setSubscribed((v) => !v); toast('Could not update subscription', { tone: 'error' }); }
   };
 
-  const share = async () => {
-    const url = `${window.location.origin}/watch?v=${video.id}`;
+  /** `atSecond` produces a link that opens at that moment — the watch page
+   *  parses `?t=` and it takes precedence over the viewer's own saved
+   *  position, which is what someone sharing a specific moment expects. */
+  const share = async (atSecond?: number) => {
+    const base = `${window.location.origin}/watch?v=${video.id}`;
+    const url = atSecond && atSecond > 0 ? `${base}&t=${Math.floor(atSecond)}` : base;
+    setShareOpen(false);
     try {
       if (navigator.share) { await navigator.share({ title: video.title, url }); return; }
       await navigator.clipboard.writeText(url);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch { /* dismissed */ }
+      toast(atSecond ? `Link copied at ${formatDuration(atSecond)}` : 'Link copied', { tone: 'success' });
+    } catch { /* dismissed, or clipboard blocked */ }
   };
 
   const startRoom = async () => {
@@ -158,10 +172,45 @@ export function WatchActions({ video, channel }: { video: Video; channel: Channe
           </AnimatePresence>
         </div>
 
-        <Pill onClick={share} label="Share" active={copied}>
-          {copied ? <Check className="h-4 w-4" /> : navigatorHasShare() ? <Share2 className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
-          <span className="hidden sm:inline">{copied ? 'Copied' : 'Share'}</span>
-        </Pill>
+        <div className="relative">
+          <Pill
+            onClick={() => (isCurrent && position > 3 ? setShareOpen((v) => !v) : share())}
+            label="Share"
+            active={copied}
+          >
+            {copied ? <Check className="h-4 w-4" /> : navigatorHasShare() ? <Share2 className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
+            <span className="hidden sm:inline">{copied ? 'Copied' : 'Share'}</span>
+          </Pill>
+
+          <AnimatePresence>
+            {shareOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShareOpen(false)} />
+                <motion.div
+                  initial={{ opacity: 0, y: 8, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                  transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute bottom-11 left-0 z-20 w-56 overflow-hidden rounded-xl border border-line-strong chrome p-1 shadow-float"
+                >
+                  <button
+                    onClick={() => share()}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-cream-dim transition-colors hover:bg-cream/[0.07] hover:text-cream"
+                  >
+                    <Link2 className="h-3.5 w-3.5 shrink-0" /> Link to the video
+                  </button>
+                  <button
+                    onClick={() => share(position)}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-cream-dim transition-colors hover:bg-cream/[0.07] hover:text-cream"
+                  >
+                    <Clock3 className="h-3.5 w-3.5 shrink-0" />
+                    <span>Starts at <span className="font-mono text-flare tnum">{formatDuration(position)}</span></span>
+                  </button>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+        </div>
 
         <Pill onClick={startRoom} label="Watch together" disabled={busy}>
           <Users className="h-4 w-4" />

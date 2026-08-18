@@ -10,6 +10,7 @@ import { usePlayer, type Rect } from '@/lib/store';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { historyEntryFrom, recordProgress } from '@/lib/db';
 import { useIsMobile } from '@/hooks/useMediaQuery';
+import { useAmbientPalette } from '@/hooks/useAmbientPalette';
 import { PlayerControls } from './PlayerControls';
 import { cn } from '@/lib/cn';
 
@@ -77,6 +78,12 @@ export function PlayerHost() {
   // which is what an effect-based reset was doing before.
   const [apiError, setApiError] = useState<{ videoId: string; message: string } | null>(null);
   const [dockHover, setDockHover] = useState(false);
+
+  // Only extracted while it will actually be shown — the glow is inline-only.
+  const palette = useAmbientPalette(
+    video?.thumbnailHq || video?.thumbnail,
+    ambient && mode === 'inline',
+  );
 
   // Saved preferences only exist once the profile has loaded, which is after
   // the store has already been initialised with its defaults.
@@ -328,17 +335,26 @@ export function PlayerHost() {
         onMouseEnter={() => setDockHover(true)}
         onMouseLeave={() => setDockHover(false)}
       >
-        {/* Ambient glow: a blown-up, blurred copy of the frame bleeding past
-            the player's edges. Only in inline mode — it would be noise in a
-            corner dock and pointless in theatre. */}
+        {/* Ambient glow. Three radial gradients built from the frame's own
+            dominant colours, rather than a blurred copy of the bitmap —
+            same effect, a fraction of the compositor cost, and the colours can
+            transition between videos instead of cross-fading two images.
+            Inline only: noise in a corner dock, pointless in theatre. */}
         {ambient && mode === 'inline' && (
-          <div
+          <motion.div
             aria-hidden
-            className="pointer-events-none absolute -inset-24 -z-10 opacity-45 blur-[70px] saturate-[1.6] animate-[drift_24s_ease-in-out_infinite_alternate]"
+            className="pointer-events-none absolute -inset-28 -z-10 animate-[drift_26s_ease-in-out_infinite_alternate]"
+            initial={false}
+            animate={{ opacity: palette.ready ? 0.5 : 0.32 }}
+            transition={{ duration: 1.2, ease: 'easeOut' }}
             style={{
-              backgroundImage: `url(${video.thumbnailHq || video.thumbnail})`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
+              background:
+                `radial-gradient(38% 46% at 22% 28%, ${palette.colors[0]} 0%, transparent 68%),` +
+                `radial-gradient(42% 40% at 78% 32%, ${palette.colors[1]} 0%, transparent 66%),` +
+                `radial-gradient(46% 48% at 50% 82%, ${palette.colors[2]} 0%, transparent 70%)`,
+              filter: 'blur(56px)',
+              // Colour transitions are cheap; re-blurring a bitmap is not.
+              transition: 'background 900ms ease-out',
             }}
           />
         )}

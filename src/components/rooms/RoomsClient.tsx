@@ -15,6 +15,7 @@ import { Thumbnail } from '@/components/ui/Thumbnail';
 import { Avatar } from '@/components/ui/Avatar';
 import { timeAgo } from '@/lib/format';
 import { toast } from '@/lib/store';
+import { extractVideoId } from '@/lib/video-id';
 import type { Room, Video } from '@/lib/types';
 
 export function RoomsClient() {
@@ -216,25 +217,4 @@ export function RoomsClient() {
       </section>
     </>
   );
-}
-
-/** Handles youtu.be, /watch?v=, /embed/, /shorts/, PRISM's own links, and a
- *  bare 11-character id. */
-function extractVideoId(input: string): string | null {
-  const raw = input.trim();
-  if (!raw) return null;
-  if (/^[\w-]{11}$/.test(raw)) return raw;
-
-  const patterns = [
-    /[?&]v=([\w-]{11})/,
-    /youtu\.be\/([\w-]{11})/,
-    /\/embed\/([\w-]{11})/,
-    /\/shorts\/([\w-]{11})/,
-    /\/live\/([\w-]{11})/,
-  ];
-  for (const re of patterns) {
-    const m = re.exec(raw);
-    if (m) return m[1];
-  }
-  return null;
 }

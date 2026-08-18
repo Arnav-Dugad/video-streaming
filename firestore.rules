@@ -49,8 +49,14 @@ service cloud.firestore {
 
     // ------------------------------------------------------------ playlists
     match /playlists/{playlistId} {
-      allow read: if resource.data.visibility == 'public'
-                  || isSelf(resource.data.ownerUid);
+      // `get` and `list` are split deliberately. Fetching one playlist by its
+      // id is allowed for anything not marked private — that is what makes
+      // "unlisted" mean anyone-with-the-link rather than owner-only. Listing
+      // is owner-scoped, so an unlisted playlist can be opened but never
+      // discovered by enumerating the collection.
+      allow get: if resource.data.visibility != 'private'
+                 || isSelf(resource.data.ownerUid);
+      allow list: if isSelf(resource.data.ownerUid);
 
       allow create: if signedIn()
                     && request.resource.data.ownerUid == request.auth.uid
@@ -80,11 +86,16 @@ service cloud.firestore {
       // The host drives playback and may change the video.
       // Everyone else may only touch the members map — which is how joining
       // and leaving work — and can never seize the host role.
+      // The host drives playback and the queue. Everyone else may only touch
+      // the members map (joining and leaving) and the queue (suggesting
+      // something to watch next) — and can never seize the host role.
       allow update: if signedIn()
                     && request.resource.data.hostUid == resource.data.hostUid
                     && (
                          resource.data.hostUid == request.auth.uid
                          || changed().hasOnly(['members'])
+                         || changed().hasOnly(['queue'])
+                         || changed().hasOnly(['members', 'queue'])
                        );
 
       allow delete: if isSelf(resource.data.hostUid);

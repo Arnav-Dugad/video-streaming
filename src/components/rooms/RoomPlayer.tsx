@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX } from 'lucide-react';
 
 import { loadYouTubeApi, PlayerState, type YTPlayer } from '@/hooks/useYouTubeApi';
-import { syncRoomPlayback } from '@/lib/db';
+import { advanceRoomQueue, syncRoomPlayback } from '@/lib/db';
 import { formatDuration } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import type { Room } from '@/lib/types';
@@ -32,6 +32,17 @@ interface Props {
 }
 
 export function RoomPlayer({ room, isHost }: Props) {
+  // The player's event handlers are bound once at construction, so they close
+  // over whatever these were then. Mirroring into a ref via an effect keeps
+  // them current without rebuilding the player on every prop change.
+  const context = useRef({ isHost, roomId: room.id });
+  useEffect(() => { context.current = { isHost, roomId: room.id }; }, [isHost, room.id]);
+
+  const onEnded = useCallback(() => {
+    if (!context.current.isHost) return;
+    advanceRoomQueue(context.current.roomId).catch(() => { /* next heartbeat retries */ });
+  }, []);
+
   const mountRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const loadedId = useRef<string | null>(null);
@@ -85,6 +96,13 @@ export function RoomPlayer({ room, isHost }: Props) {
               if (cancelled) return;
               if (e.data === PlayerState.PLAYING) setPlaying(true);
               if (e.data === PlayerState.PAUSED) setPlaying(false);
+              if (e.data === PlayerState.ENDED) {
+                setPlaying(false);
+                // Only the host advances. Every guest also sees ENDED, and if
+                // they all wrote the next video the queue would jump several
+                // items at once.
+                onEnded();
+              }
               // A guest pausing on their own end is corrected by the next
               // heartbeat; only the host's transport is authoritative.
             },

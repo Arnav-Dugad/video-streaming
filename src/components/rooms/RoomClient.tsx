@@ -11,6 +11,7 @@ import { isFirebaseConfigured } from '@/lib/firebase';
 import { joinRoom, leaveRoom, watchRoom } from '@/lib/db';
 import { RoomPlayer } from './RoomPlayer';
 import { RoomChat } from './RoomChat';
+import { RoomQueue } from './RoomQueue';
 import { Avatar } from '@/components/ui/Avatar';
 import { ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/PageHeader';
@@ -165,6 +166,10 @@ export function RoomClient({ roomId }: { roomId: string }) {
               corrects itself if it drifts more than a second and a half.
             </p>
           )}
+
+          <div className="mt-5">
+            <RoomQueue room={room} user={user} isHost={isHost} />
+          </div>
         </div>
 
         <aside className="lg:h-[calc(100svh-8rem)] lg:sticky lg:top-24">

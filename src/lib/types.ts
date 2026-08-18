@@ -124,6 +124,21 @@ export interface Room {
   updatedAt: number;
   createdAt: number;
   members: Record<string, { name: string; photo: string | null; joinedAt: number }>;
+  /** Host-managed up-next list. Denormalised so the queue renders for guests
+   *  without a second read per entry. */
+  queue?: RoomQueueItem[];
+}
+
+export interface RoomQueueItem {
+  videoId: string;
+  title: string;
+  thumbnail: string;
+  channelTitle: string;
+  durationSeconds: number;
+  /** Who put it in the queue — guests can suggest, the host decides. */
+  addedByUid: string;
+  addedByName: string;
+  addedAt: number;
 }
 
 export interface RoomMessage {

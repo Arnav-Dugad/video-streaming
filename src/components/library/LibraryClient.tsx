@@ -364,14 +364,16 @@ function Playlists({
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
           {items.map((p) => (
             <article key={p.id} className="group relative overflow-hidden rounded-2xl border border-line p-4 transition-[border-color] duration-400 hover:border-line-strong">
-              <div className="mb-4 grid aspect-video grid-cols-2 gap-1 overflow-hidden rounded-xl bg-ink-800">
-                {(p.covers.length > 0 ? p.covers : ['', '', '', '']).slice(0, 4).map((cover, i) => (
-                  <span key={i} className="relative overflow-hidden bg-ink-850">
-                    {cover && <Thumbnail src={cover} alt="" sizes="150px" reveal={false} />}
-                  </span>
-                ))}
-              </div>
-              <h3 className="truncate text-[14px] font-medium text-cream">{p.title}</h3>
+              <Link href={`/playlist/${p.id}`} data-cursor="Open">
+                <div className="mb-4 grid aspect-video grid-cols-2 gap-1 overflow-hidden rounded-xl bg-ink-800">
+                  {(p.covers.length > 0 ? p.covers : ['', '', '', '']).slice(0, 4).map((cover, i) => (
+                    <span key={i} className="relative overflow-hidden bg-ink-850">
+                      {cover && <Thumbnail src={cover} alt="" sizes="150px" reveal={false} />}
+                    </span>
+                  ))}
+                </div>
+                <h3 className="truncate text-[14px] font-medium text-cream">{p.title}</h3>
+              </Link>
               <p className="mt-1 font-mono text-[11px] text-faint tnum">
                 {pluralise(p.videoIds.length, 'video')} · {p.visibility}
               </p>
