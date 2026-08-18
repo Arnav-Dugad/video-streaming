@@ -119,16 +119,22 @@ export function InsightsClient() {
             <StatTile
               label="Time watched"
               value={humanDuration(insights.totalSeconds)}
+              countTo={insights.totalSeconds}
+              format={humanDuration}
               hint={`About ${Math.max(1, Math.round(insights.totalSeconds / 3600 / 24 * 10) / 10)} full days of footage`}
             />
             <StatTile
               label="Videos started"
               value={compactNumber(insights.videosStarted)}
+              countTo={insights.videosStarted}
+              format={(n) => compactNumber(Math.round(n))}
               hint={`${compactNumber(insights.videosFinished)} watched to the end`}
             />
             <StatTile
               label="Finish rate"
               value={`${finishRate}%`}
+              countTo={finishRate}
+              format={(n) => `${Math.round(n)}%`}
               hint={finishRate >= 60
                 ? 'You mostly finish what you start.'
                 : 'You sample widely and finish selectively.'}
@@ -136,6 +142,8 @@ export function InsightsClient() {
             <StatTile
               label="Current streak"
               value={`${insights.currentStreak} ${insights.currentStreak === 1 ? 'day' : 'days'}`}
+              countTo={insights.currentStreak}
+              format={(n) => `${Math.round(n)} ${Math.round(n) === 1 ? 'day' : 'days'}`}
               hint={`Longest run: ${insights.longestStreak} ${insights.longestStreak === 1 ? 'day' : 'days'}`}
             />
           </div>

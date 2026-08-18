@@ -2,17 +2,19 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { animate, motion, useMotionValue, useMotionValueEvent, useTransform } from 'motion/react';
+import { AnimatePresence, animate, motion, useMotionValue, useMotionValueEvent, useTransform } from 'motion/react';
 import { Maximize2, Minimize2, X, SkipForward } from 'lucide-react';
 
 import { loadYouTubeApi, PlayerState, type YTPlayer } from '@/hooks/useYouTubeApi';
 import { usePlayer, type Rect } from '@/lib/store';
+import type { Video } from '@/lib/types';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { historyEntryFrom, recordProgress } from '@/lib/db';
 import { useIsMobile } from '@/hooks/useMediaQuery';
 import { useAmbientPalette } from '@/hooks/useAmbientPalette';
 import { usePreferences } from '@/hooks/usePreferences';
 import { PlayerControls } from './PlayerControls';
+import { AutoplayNext } from './AutoplayNext';
 import { cn } from '@/lib/cn';
 
 /* ==========================================================================
@@ -82,6 +84,9 @@ export function PlayerHost() {
   // updating too — which is the honest meaning of the setting.
   const recording = Boolean(user) && !prefs.pauseHistory;
 
+  const autoplayRef = useRef(prefs.autoplay);
+  useEffect(() => { autoplayRef.current = prefs.autoplay; }, [prefs.autoplay]);
+
   const video = usePlayer((s) => s.video);
   const highRes = usePlayer((s) => s.highRes);
   const slot = usePlayer((s) => s.slot);
@@ -100,6 +105,10 @@ export function PlayerHost() {
   // which is what an effect-based reset was doing before.
   const [apiError, setApiError] = useState<{ videoId: string; message: string } | null>(null);
   const [dockHover, setDockHover] = useState(false);
+  /* Keyed by the video it followed, so switching videos invalidates it by
+     itself — a reset effect would be a synchronous setState during render's
+     commit and cascade an extra pass. */
+  const [pending, setPending] = useState<{ after: string; video: Video } | null>(null);
 
   // Only extracted while it will actually be shown — the glow is inline-only.
   const palette = useAmbientPalette(
@@ -174,14 +183,24 @@ export function PlayerHost() {
 
   const handleEnded = useCallback(() => {
     const s = usePlayer.getState();
-    if (user && s.video) {
+    if (recording && user && s.video) {
       recordProgress(user.uid, historyEntryFrom(s.video, s.video.durationSeconds ?? s.duration)).catch(() => {});
     }
-    const next = s.playNext();
-    if (next && pathname === '/watch') {
-      router.push(`/watch?v=${next.id}`);
+
+    // Offer the next video rather than jumping straight to it. An autoplay
+    // you cannot catch is the part of autoplay people actually dislike — and
+    // outside the watch page there is nowhere sensible to navigate to anyway.
+    const upcoming = s.queue[0];
+    if (upcoming && autoplayRef.current && pathname === '/watch' && s.video) {
+      setPending({ after: s.video.id, video: upcoming });
     }
-  }, [pathname, router, user]);
+  }, [pathname, recording, user]);
+
+  const playPending = useCallback(() => {
+    setPending(null);
+    const next = usePlayer.getState().playNext();
+    if (next) router.push(`/watch?v=${next.id}`);
+  }, [router]);
 
   const api = useCallback(() => playerRef.current, []);
 
@@ -422,6 +441,17 @@ export function PlayerHost() {
             </div>
           </div>
         )}
+
+        <AnimatePresence>
+          {pending?.after === video.id && !docked && (
+            <AutoplayNext
+              key={pending.video.id}
+              next={pending.video}
+              onPlay={playPending}
+              onCancel={() => setPending(null)}
+            />
+          )}
+        </AnimatePresence>
 
         {/* Docked chrome: a compact strip, distinct from the full control bar. */}
         {docked ? (

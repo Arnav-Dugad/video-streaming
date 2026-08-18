@@ -4,6 +4,7 @@ import { useId, useState, type ReactNode } from 'react';
 import { Table2 } from 'lucide-react';
 
 import { cn } from '@/lib/cn';
+import { useCountUp } from '@/hooks/useCountUp';
 
 /* ==========================================================================
    Chart primitives.
@@ -125,8 +126,19 @@ export function DataTable({
 /* ------------------------------ stat tile -------------------------------- */
 
 export function StatTile({
-  label, value, hint,
-}: { label: string; value: string; hint?: string }) {
+  label, value, hint, countTo, format,
+}: {
+  label: string;
+  /** Used as-is when there is nothing to count. */
+  value: string;
+  hint?: string;
+  /** Counts up to this on first view; `format` renders each frame. */
+  countTo?: number;
+  format?: (n: number) => string;
+}) {
+  const { ref, value: counted } = useCountUp(countTo ?? 0);
+  const showCount = countTo !== undefined && format;
+
   return (
     <div className="rounded-2xl border border-line bg-ink-850/60 p-5">
       <p className="eyebrow">{label}</p>
@@ -134,7 +146,7 @@ export function StatTile({
           digits make a large standalone number read loose, and a serif on a hero
           figure reads as decoration rather than data. */}
       <p className="mt-2.5 text-[clamp(1.9rem,4vw,2.6rem)] font-semibold leading-none tracking-[-0.02em] text-cream">
-        {value}
+        <span ref={ref}>{showCount ? format(counted) : value}</span>
       </p>
       {hint && <p className="mt-2 text-[12px] leading-relaxed text-muted">{hint}</p>}
     </div>
