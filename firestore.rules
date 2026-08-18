@@ -107,13 +107,21 @@ service cloud.firestore {
       // The host drives playback and the queue. Everyone else may only touch
       // the members map (joining and leaving) and the queue (suggesting
       // something to watch next) — and can never seize the host role.
+      // A non-host writing `members` may only touch their *own* entry —
+      // `changed().hasOnly(['members'])` alone would let any guest rewrite
+      // the whole map and evict everybody.
+      function onlyOwnMembership() {
+        return request.resource.data.members.diff(resource.data.members)
+                 .affectedKeys().hasOnly([request.auth.uid]);
+      }
+
       allow update: if signedIn()
                     && request.resource.data.hostUid == resource.data.hostUid
                     && (
                          resource.data.hostUid == request.auth.uid
-                         || changed().hasOnly(['members'])
+                         || (changed().hasOnly(['members']) && onlyOwnMembership())
                          || changed().hasOnly(['queue'])
-                         || changed().hasOnly(['members', 'queue'])
+                         || (changed().hasOnly(['members', 'queue']) && onlyOwnMembership())
                        );
 
       allow delete: if isSelf(resource.data.hostUid);

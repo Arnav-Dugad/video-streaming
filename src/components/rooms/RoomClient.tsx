@@ -8,10 +8,11 @@ import { ArrowLeft, Check, Copy, Crown, DoorOpen, Loader2, Users } from 'lucide-
 
 import { useAuth } from '@/components/providers/AuthProvider';
 import { isFirebaseConfigured } from '@/lib/firebase';
-import { joinRoom, leaveRoom, watchRoom } from '@/lib/db';
+import { joinRoom, leaveRoom, tasteSignal, watchRoom } from '@/lib/db';
 import { RoomPlayer } from './RoomPlayer';
 import { RoomChat } from './RoomChat';
 import { RoomQueue } from './RoomQueue';
+import { RoomSuggestions } from './RoomSuggestions';
 import { Avatar } from '@/components/ui/Avatar';
 import { ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/PageHeader';
@@ -32,12 +33,27 @@ export function RoomClient({ roomId }: { roomId: string }) {
     return watchRoom(roomId, setRoom);
   }, [roomId, configured]);
 
-  // Register as a member once, on arrival.
+  // Register as a member once, on arrival, contributing a short taste signal
+  // so the room can find common ground without anyone's history being shared.
   useEffect(() => {
     if (!user || !room) return;
     if (room.members?.[user.uid]) return;
-    joinRoom(roomId, { uid: user.uid, name: user.displayName ?? 'Viewer', photo: user.photoURL })
+
+    let alive = true;
+    tasteSignal(user.uid)
+      .catch(() => [] as string[])
+      .then((taste) => {
+        if (!alive) return;
+        return joinRoom(roomId, {
+          uid: user.uid,
+          name: user.displayName ?? 'Viewer',
+          photo: user.photoURL,
+          taste,
+        });
+      })
       .catch(() => toast('Could not join this room', { tone: 'error' }));
+
+    return () => { alive = false; };
   }, [user, room, roomId]);
 
   if (!configured) {
@@ -167,8 +183,9 @@ export function RoomClient({ roomId }: { roomId: string }) {
             </p>
           )}
 
-          <div className="mt-5">
+          <div className="mt-5 space-y-5">
             <RoomQueue room={room} user={user} isHost={isHost} />
+            <RoomSuggestions room={room} user={user} isHost={isHost} />
           </div>
         </div>
 

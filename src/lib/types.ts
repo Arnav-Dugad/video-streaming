@@ -202,10 +202,21 @@ export interface Room {
   positionSeconds: number;
   updatedAt: number;
   createdAt: number;
-  members: Record<string, { name: string; photo: string | null; joinedAt: number }>;
+  members: Record<string, RoomMember>;
   /** Host-managed up-next list. Denormalised so the queue renders for guests
    *  without a second read per entry. */
   queue?: RoomQueueItem[];
+}
+
+export interface RoomMember {
+  name: string;
+  photo: string | null;
+  joinedAt: number;
+  /** A handful of channel names this member watches most, contributed when
+   *  they join. Deliberately *not* their history: the room needs enough to
+   *  find common ground and nothing more, and each member's history stays
+   *  readable only by them. */
+  taste?: string[];
 }
 
 export interface RoomQueueItem {

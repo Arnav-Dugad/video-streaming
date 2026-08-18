@@ -425,11 +425,32 @@ export function watchRoom(roomId: string, onChange: (room: Room | null) => void)
 
 export async function joinRoom(
   roomId: string,
-  member: { uid: string; name: string; photo: string | null },
+  member: { uid: string; name: string; photo: string | null; taste?: string[] },
 ): Promise<void> {
   await updateDoc(doc(store(), 'rooms', roomId), {
-    [`members.${member.uid}`]: { name: member.name, photo: member.photo, joinedAt: Date.now() },
+    [`members.${member.uid}`]: {
+      name: member.name,
+      photo: member.photo,
+      joinedAt: Date.now(),
+      // Capped at five: enough to find overlap, little enough that it is a
+      // preference rather than a profile.
+      taste: (member.taste ?? []).slice(0, 5),
+    },
   });
+}
+
+/** The channels this viewer watches most, for contributing to a room. Derived
+ *  locally from their own history — nothing else can read it. */
+export async function tasteSignal(uid: string, max = 5): Promise<string[]> {
+  const history = await getHistory(uid, 120).catch(() => [] as HistoryEntry[]);
+  const weights = new Map<string, number>();
+  for (const entry of history) {
+    if (!entry.channelTitle) continue;
+    // Finishing something says more than opening it.
+    const weight = entry.completed ? 3 : entry.progress > 120 ? 2 : 1;
+    weights.set(entry.channelTitle, (weights.get(entry.channelTitle) ?? 0) + weight);
+  }
+  return [...weights.entries()].sort((a, b) => b[1] - a[1]).slice(0, max).map(([name]) => name);
 }
 
 export async function leaveRoom(roomId: string, uid: string): Promise<void> {
