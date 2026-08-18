@@ -9,7 +9,7 @@ import {
 import { db } from './firebase';
 import type {
   HistoryEntry, Playlist, Preferences, Room, RoomMessage, RoomQueueItem,
-  SavedVideo, UserProfile, Video,
+  SavedVideo, SmartPlaylist, SmartRule, UserProfile, Video,
 } from './types';
 
 /* ==========================================================================
@@ -320,6 +320,56 @@ export async function updatePlaylist(id: string, patch: Partial<Playlist>): Prom
 
 export async function deletePlaylist(id: string): Promise<void> {
   await deleteDoc(doc(store(), 'playlists', id));
+}
+
+/* --------------------------- smart playlists ---------------------------- */
+
+export const DEFAULT_SMART_RULE: SmartRule = {
+  channelIds: [],
+  channelNames: [],
+  order: 'date',
+  limit: 40,
+};
+
+export async function createSmartPlaylist(
+  uid: string,
+  title: string,
+  rule: SmartRule,
+): Promise<string> {
+  const ref = await addDoc(collection(store(), 'smartPlaylists'), {
+    ownerUid: uid,
+    title,
+    rule,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  return ref.id;
+}
+
+export async function listSmartPlaylists(uid: string): Promise<SmartPlaylist[]> {
+  const q = query(
+    collection(store(), 'smartPlaylists'),
+    where('ownerUid', '==', uid),
+    orderBy('updatedAt', 'desc'),
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SmartPlaylist, 'id'>) }));
+}
+
+export async function getSmartPlaylist(id: string): Promise<SmartPlaylist | null> {
+  const snap = await getDoc(doc(store(), 'smartPlaylists', id));
+  return snap.exists() ? { id: snap.id, ...(snap.data() as Omit<SmartPlaylist, 'id'>) } : null;
+}
+
+export async function updateSmartPlaylist(
+  id: string,
+  patch: Partial<Pick<SmartPlaylist, 'title' | 'rule'>>,
+): Promise<void> {
+  await updateDoc(doc(store(), 'smartPlaylists', id), { ...patch, updatedAt: Date.now() });
+}
+
+export async function deleteSmartPlaylist(id: string): Promise<void> {
+  await deleteDoc(doc(store(), 'smartPlaylists', id));
 }
 
 /* ----------------------------- watch parties ---------------------------- */

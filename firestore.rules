@@ -72,6 +72,24 @@ service cloud.firestore {
       allow delete: if isSelf(resource.data.ownerUid);
     }
 
+    // ------------------------------------------------- smart playlists
+    // Strictly private: a smart playlist is a rule over someone's own follow
+    // list, so there is no sharing model to support and no reason for anyone
+    // else to read one.
+    match /smartPlaylists/{smartId} {
+      allow read: if isSelf(resource.data.ownerUid);
+      allow create: if signedIn()
+                    && request.resource.data.ownerUid == request.auth.uid
+                    && request.resource.data.title is string
+                    && request.resource.data.title.size() > 0
+                    && request.resource.data.title.size() <= 120
+                    && request.resource.data.rule.channelIds is list
+                    && request.resource.data.rule.channelIds.size() <= 10;
+      allow update: if isSelf(resource.data.ownerUid)
+                    && request.resource.data.ownerUid == resource.data.ownerUid;
+      allow delete: if isSelf(resource.data.ownerUid);
+    }
+
     // ---------------------------------------------------------------- rooms
     match /rooms/{roomId} {
       // Any signed-in user may look a room up — the six-character code is the

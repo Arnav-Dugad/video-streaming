@@ -154,6 +154,40 @@ export interface SavedVideo {
   savedAt: number;
 }
 
+/* ==========================================================================
+   Smart playlists.
+
+   A saved *rule*, not a list of ids — the same shape the collection generator
+   uses, pointed at a viewer's own channels instead of the trending chart. The
+   contents are resolved on every visit, so a smart playlist is never stale and
+   never needs syncing.
+   ========================================================================== */
+
+export interface SmartRule {
+  /** Up to 10. Walking a channel's uploads costs 1 quota unit; a search costs
+   *  100, so channel-scoped rules are dramatically cheaper. */
+  channelIds: string[];
+  /** Denormalised for display, so the editor need not re-fetch channel names. */
+  channelNames: string[];
+  query?: string;
+  minSeconds?: number;
+  maxSeconds?: number;
+  publishedWithinDays?: number;
+  /** Applied in the browser against the viewer's own history. */
+  excludeWatched?: boolean;
+  order: 'date' | 'viewCount' | 'relevance';
+  limit: number;
+}
+
+export interface SmartPlaylist {
+  id: string;
+  ownerUid: string;
+  title: string;
+  rule: SmartRule;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Room {
   id: string;
   code: string;

@@ -5,15 +5,16 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  Bookmark, Clock, Heart, ListVideo, Plus, Trash2, Users2, X,
+  Bookmark, Clock, Heart, ListVideo, Plus, Sparkles, Trash2, Users2, X,
 } from 'lucide-react';
 
 import { useAuth } from '@/components/providers/AuthProvider';
 import {
-  clearHistory, createPlaylist, deletePlaylist, getHistory, listCollection,
-  listPlaylists, listSubscriptions, removeFromHistory, type Subscription,
+  clearHistory, createPlaylist, createSmartPlaylist, deletePlaylist, getHistory,
+  listCollection, listPlaylists, listSmartPlaylists, listSubscriptions,
+  removeFromHistory, DEFAULT_SMART_RULE, type Subscription,
 } from '@/lib/db';
-import type { HistoryEntry, Playlist, SavedVideo } from '@/lib/types';
+import type { HistoryEntry, Playlist, SavedVideo, SmartPlaylist } from '@/lib/types';
 import { PageHeader, EmptyState } from '@/components/ui/PageHeader';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Thumbnail } from '@/components/ui/Thumbnail';
@@ -54,6 +55,7 @@ export function LibraryClient() {
   const [liked, setLiked] = useState<SavedVideo[] | null>(null);
   const [history, setHistory] = useState<HistoryEntry[] | null>(null);
   const [playlists, setPlaylists] = useState<Playlist[] | null>(null);
+  const [smart, setSmart] = useState<SmartPlaylist[] | null>(null);
   const [following, setFollowing] = useState<Subscription[] | null>(null);
 
   // Bumping this re-runs the fetch effect. Cheaper and less error-prone than
@@ -70,9 +72,10 @@ export function LibraryClient() {
       getHistory(user.uid).catch(() => []),
       listPlaylists(user.uid).catch(() => []),
       listSubscriptions(user.uid).catch(() => []),
-    ]).then(([s, l, h, p, f]) => {
+      listSmartPlaylists(user.uid).catch(() => []),
+    ]).then(([s, l, h, p, f, sm]) => {
       if (!alive) return;
-      setSaved(s); setLiked(l); setHistory(h); setPlaylists(p); setFollowing(f);
+      setSaved(s); setLiked(l); setHistory(h); setPlaylists(p); setFollowing(f); setSmart(sm);
     });
     return () => { alive = false; };
   }, [user, reloadToken]);
@@ -81,9 +84,9 @@ export function LibraryClient() {
     saved: saved?.length ?? 0,
     liked: liked?.length ?? 0,
     history: history?.length ?? 0,
-    playlists: playlists?.length ?? 0,
+    playlists: (playlists?.length ?? 0) + (smart?.length ?? 0),
     following: following?.length ?? 0,
-  }), [saved, liked, history, playlists, following]);
+  }), [saved, liked, history, playlists, smart, following]);
 
   /* --------------------------- gated states ----------------------------- */
 
@@ -199,6 +202,9 @@ export function LibraryClient() {
 
         {tab === 'playlists' && (
           <Playlists
+            smart={smart}
+            uid={user.uid}
+            onReload={load}
             items={playlists}
             onCreate={async (title) => {
               try { await createPlaylist(user.uid, { title }); load(); toast(`Created “${title}”`, { tone: 'success' }); }
@@ -327,10 +333,31 @@ function HistoryList({
 }
 
 function Playlists({
-  items, onCreate, onDelete,
-}: { items: Playlist[] | null; onCreate(title: string): void; onDelete(id: string): void }) {
+  items, smart, uid, onCreate, onDelete, onReload,
+}: {
+  items: Playlist[] | null;
+  smart: SmartPlaylist[] | null;
+  uid: string;
+  onCreate(title: string): void;
+  onDelete(id: string): void;
+  onReload(): void;
+}) {
+  const router = useRouter();
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState('');
+  const [makingSmart, setMakingSmart] = useState(false);
+
+  const newSmart = async () => {
+    setMakingSmart(true);
+    try {
+      const id = await createSmartPlaylist(uid, 'New smart playlist', { ...DEFAULT_SMART_RULE });
+      onReload();
+      router.push(`/smart/${id}`);
+    } catch {
+      toast('Could not create that', { tone: 'error' });
+      setMakingSmart(false);
+    }
+  };
 
   if (items === null) return <GridSkeleton count={4} />;
 
@@ -360,11 +387,42 @@ function Playlists({
             <Button onClick={() => setCreating(false)} variant="ghost" size="md">Cancel</Button>
           </div>
         ) : (
-          <Button onClick={() => setCreating(true)} variant="outline" size="sm">
-            <Plus className="h-3.5 w-3.5" /> New playlist
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => setCreating(true)} variant="outline" size="sm">
+              <Plus className="h-3.5 w-3.5" /> New playlist
+            </Button>
+            <Button onClick={newSmart} variant="ghost" size="sm" loading={makingSmart}>
+              <Sparkles className="h-3.5 w-3.5" /> New smart playlist
+            </Button>
+          </div>
         )}
       </div>
+
+      {smart && smart.length > 0 && (
+        <section className="mb-10">
+          <p className="eyebrow mb-4 flex items-center gap-1.5">
+            <Sparkles className="h-3 w-3" /> Rules, rebuilt on every visit
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {smart.map((sp) => (
+              <Link
+                key={sp.id}
+                href={`/smart/${sp.id}`}
+                className="group rounded-2xl border border-line p-4 transition-[border-color,background-color] duration-300 hover:border-line-strong hover:bg-cream/[0.03]"
+              >
+                <p className="truncate text-[14px] font-medium text-cream">{sp.title}</p>
+                <p className="clamp-2 mt-1.5 text-[12px] leading-relaxed text-muted">
+                  {sp.rule.channelNames.length > 0
+                    ? sp.rule.channelNames.join(', ')
+                    : sp.rule.query
+                      ? `Anything matching “${sp.rule.query}”`
+                      : 'No sources chosen yet'}
+                </p>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       {items.length === 0 ? (
         <EmptyState icon={<ListVideo className="h-6 w-6" />} title="No playlists yet" body="Playlists are the one part of a library worth curating by hand." />
