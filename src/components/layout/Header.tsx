@@ -6,7 +6,8 @@ import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useMotionValueEvent, useScroll } from 'motion/react';
 import {
   BarChart3, Bookmark, Clock, Command, Compass, Flame, LogOut, Menu, Search,
-  Settings, Sparkles, TvMinimalPlay, User as UserIcon, X, Users,
+  Settings, Sparkles, SplitSquareHorizontal, TvMinimalPlay, User as UserIcon,
+  X, Users,
 } from 'lucide-react';
 
 import { Logo } from './Logo';
@@ -31,6 +32,7 @@ const NAV = [
   { href: '/trending', label: 'Trending', icon: Flame },
   { href: '/collections', label: 'Collections', icon: Sparkles },
   { href: '/rooms', label: 'Rooms', icon: Users },
+  { href: '/compare', label: 'Compare', icon: SplitSquareHorizontal },
 ] as const;
 
 /** The chart is region-scoped, so the nav link carries the viewer's own region
