@@ -11,6 +11,7 @@ import { cn } from '@/lib/cn';
 import { formatDuration, timeAgo, viewLabel } from '@/lib/format';
 import type { Video } from '@/lib/types';
 import { useIsTouch, usePrefersReducedMotion } from '@/hooks/useMediaQuery';
+import { usePreferences } from '@/hooks/usePreferences';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { toggleInCollection } from '@/lib/db';
 import { toast } from '@/lib/store';
@@ -55,6 +56,7 @@ export function VideoCard({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touch = useIsTouch();
   const reduced = usePrefersReducedMotion();
+  const prefs = usePreferences();
   const { user } = useAuth();
 
   const duration = video.durationSeconds ?? 0;
@@ -64,7 +66,7 @@ export function VideoCard({
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
 
   const enter = () => {
-    if (touch || reduced) return;
+    if (touch || reduced || !prefs.hoverPreviews || prefs.reduceMotion) return;
     setHovered(true);
     timer.current = setTimeout(() => setPreview(true), HOVER_DELAY);
   };

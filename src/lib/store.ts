@@ -46,6 +46,9 @@ interface PlayerState {
   /** Active caption language code, or null when captions are off. */
   captionTrack: string | null;
   captionTracks: CaptionTrack[];
+  /** Render the embed at 1920x1080 and scale it down, so YouTube's adaptive
+   *  streaming offers renditions above 720p. See PlayerHost for why. */
+  highRes: boolean;
 
   load(video: Video, opts?: { startAt?: number; queue?: Video[] }): void;
   setSlot(rect: Rect | null): void;
@@ -65,6 +68,7 @@ interface PlayerState {
   setAvailableQualities(levels: string[]): void;
   setCaptionTrack(code: string | null): void;
   setCaptionTracks(tracks: CaptionTrack[]): void;
+  setHighRes(on: boolean): void;
   close(): void;
 }
 
@@ -88,6 +92,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   availableQualities: [],
   captionTrack: null,
   captionTracks: [],
+  highRes: true,
 
   load: (video, opts) =>
     set((s) => ({
@@ -158,6 +163,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   setAvailableQualities: (availableQualities) => set({ availableQualities }),
   setCaptionTrack: (captionTrack) => set({ captionTrack }),
   setCaptionTracks: (captionTracks) => set({ captionTracks }),
+  setHighRes: (highRes) => set({ highRes }),
 
   close: () =>
     set({

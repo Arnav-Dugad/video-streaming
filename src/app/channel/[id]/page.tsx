@@ -3,11 +3,12 @@ import type { Metadata } from 'next';
 import Image from 'next/image';
 import { Video as VideoIcon } from 'lucide-react';
 
-import { getChannel, getChannelUploads } from '@/lib/youtube';
+import { getChannel, getChannelPlaylists, getChannelUploads } from '@/lib/youtube';
 import { VideoGrid } from '@/components/video/VideoGrid';
 import { EmptyState } from '@/components/ui/PageHeader';
 import { Avatar } from '@/components/ui/Avatar';
 import { SubscribeButton } from '@/components/channel/SubscribeButton';
+import { PlaylistCard } from '@/components/video/ChannelCard';
 import { compactNumber, formatDate, subscriberLabel } from '@/lib/format';
 import { Reveal } from '@/components/ui/Reveal';
 
@@ -33,7 +34,10 @@ export default async function ChannelPage({ params }: { params: Params }) {
   const channel = await getChannel(id);
   if (!channel) notFound();
 
-  const uploads = await getChannelUploads(id, undefined, 36).catch(() => ({ items: [] }));
+  const [uploads, playlists] = await Promise.all([
+    getChannelUploads(id, undefined, 36).catch(() => ({ items: [] })),
+    getChannelPlaylists(id, 12).catch(() => []),
+  ]);
 
   return (
     <>
@@ -62,7 +66,10 @@ export default async function ChannelPage({ params }: { params: Params }) {
       </div>
 
       {/* ------------------------------ identity --------------------------- */}
-      <header className="gutter-wide -mt-12 pb-8 sm:-mt-16">
+      {/* `relative z-10` is load-bearing: the banner above is positioned, so
+          without this the negatively-margined header paints *underneath* it and
+          the channel title disappears into the banner's gradient. */}
+      <header className="gutter-wide relative z-10 -mt-12 pb-8 sm:-mt-16">
         <Reveal className="flex flex-wrap items-end gap-5">
           <div className="rounded-full bg-ink-950 p-1">
             <Avatar src={channel.avatar} name={channel.title} size={104} className="sm:h-[128px] sm:w-[128px]" />
@@ -117,6 +124,19 @@ export default async function ChannelPage({ params }: { params: Params }) {
           }
         />
       </section>
+
+      {playlists.length > 0 && (
+        <section className="gutter-wide pb-12">
+          <div className="hairline-t mb-9" />
+          <div className="mb-6 flex items-baseline gap-3">
+            <h2 className="text-[15px] font-medium text-cream">Playlists</h2>
+            <span className="font-mono text-[11px] text-faint tnum">{playlists.length}</span>
+          </div>
+          <div className="grid grid-cols-1 gap-x-5 gap-y-9 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+            {playlists.map((p, i) => <PlaylistCard key={p.id} playlist={p} index={i} />)}
+          </div>
+        </section>
+      )}
     </>
   );
 }

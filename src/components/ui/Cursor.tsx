@@ -3,6 +3,7 @@
 import { AnimatePresence, motion, useMotionValue, useSpring } from 'motion/react';
 import { useEffect, useState } from 'react';
 import { usePrefersReducedMotion, useIsTouch } from '@/hooks/useMediaQuery';
+import { usePreferences } from '@/hooks/usePreferences';
 
 /* ==========================================================================
    Cursor companion.
@@ -17,6 +18,8 @@ import { usePrefersReducedMotion, useIsTouch } from '@/hooks/useMediaQuery';
 export function Cursor() {
   const reduced = usePrefersReducedMotion();
   const touch = useIsTouch();
+  const prefs = usePreferences();
+  const disabled = reduced || touch || !prefs.cursorCompanion || prefs.reduceMotion;
 
   const x = useMotionValue(-100);
   const y = useMotionValue(-100);
@@ -27,14 +30,19 @@ export function Cursor() {
   const [label, setLabel] = useState<string | null>(null);
   const [visible, setVisible] = useState(false);
   const [pressed, setPressed] = useState(false);
+  /* Nothing is rendered until the pointer has actually moved once. Mounting it
+     up front left a ring parked at its initial coordinates, which showed up as
+     a stray arc in the corner on first paint. */
+  const [everMoved, setEverMoved] = useState(false);
 
   useEffect(() => {
-    if (reduced || touch) return;
+    if (disabled) return;
 
     const onMove = (e: PointerEvent) => {
       x.set(e.clientX);
       y.set(e.clientY);
       if (!visible) setVisible(true);
+      if (!everMoved) setEverMoved(true);
 
       const el = (e.target as HTMLElement)?.closest<HTMLElement>(
         '[data-cursor], a, button, [role="button"], input, textarea, select',
@@ -57,9 +65,9 @@ export function Cursor() {
       window.removeEventListener('pointerdown', onDown);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [reduced, touch, visible, x, y]);
+  }, [disabled, visible, everMoved, x, y]);
 
-  if (reduced || touch) return null;
+  if (disabled || !everMoved) return null;
 
   return (
     <motion.div

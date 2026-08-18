@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { useAuth } from '@/components/providers/AuthProvider';
 import { getHistory } from '@/lib/db';
+import { useSearchDefaults } from '@/hooks/usePreferences';
 import { Rail, RailItem } from '@/components/video/Rail';
 import { VideoCard } from '@/components/video/VideoCard';
 import { RailSkeleton } from '@/components/ui/Skeleton';
@@ -29,6 +30,7 @@ export function ForYou() {
   const { user, profile, loading } = useAuth();
   const [videos, setVideos] = useState<Video[] | null>(null);
   const [signals, setSignals] = useState<Signal[] | null>(null);
+  const searchDefaults = useSearchDefaults();
 
   const interests = useMemo(() => profile?.interests ?? [], [profile]);
 
@@ -74,12 +76,13 @@ export function ForYou() {
     // One query per signal, interleaved — a single combined query would return
     // the intersection of the viewer's interests, which is usually empty.
     Promise.all(
-      signals.slice(0, 3).map((s) =>
-        fetch(`/api/search?q=${encodeURIComponent(s.term)}&limit=6`, { signal: controller.signal })
+      signals.slice(0, 3).map((s) => {
+        const qs = new URLSearchParams({ q: s.term, limit: '6', ...searchDefaults });
+        return fetch(`/api/search?${qs}`, { signal: controller.signal })
           .then((r) => r.json())
           .then((d: { items?: Video[] }) => d.items ?? [])
-          .catch(() => [] as Video[]),
-      ),
+          .catch(() => [] as Video[]);
+      }),
     ).then((groups) => {
       const seen = new Set<string>();
       const out: Video[] = [];
@@ -95,7 +98,7 @@ export function ForYou() {
     });
 
     return () => controller.abort();
-  }, [signals]);
+  }, [signals, searchDefaults]);
 
   if (!user || (signals !== null && signals.length === 0)) return null;
   if (videos === null) return <div className="gutter-wide py-8"><RailSkeleton count={4} /></div>;

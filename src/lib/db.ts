@@ -8,7 +8,8 @@ import {
 
 import { db } from './firebase';
 import type {
-  HistoryEntry, Playlist, Room, RoomMessage, RoomQueueItem, SavedVideo, UserProfile, Video,
+  HistoryEntry, Playlist, Preferences, Room, RoomMessage, RoomQueueItem,
+  SavedVideo, UserProfile, Video,
 } from './types';
 
 /* ==========================================================================
@@ -41,11 +42,24 @@ function store() {
 
 /* ------------------------------- profile -------------------------------- */
 
-export const DEFAULT_PREFERENCES: UserProfile['preferences'] = {
+export const DEFAULT_PREFERENCES: Preferences = {
   autoplay: true,
   ambientGlow: true,
   reduceMotion: false,
   defaultQuality: 'auto',
+  // On by default: without it the embed is effectively capped at 720p, which
+  // is the most common complaint about a YouTube player inside a page.
+  highRes: true,
+  defaultSpeed: 1,
+  skipInterval: 10,
+  theatreByDefault: false,
+  region: 'US',
+  language: 'en',
+  safeSearch: 'moderate',
+  hoverPreviews: true,
+  cursorCompanion: true,
+  filmGrain: true,
+  pauseHistory: false,
 };
 
 export async function ensureProfile(
@@ -97,7 +111,7 @@ export async function updateProfile(uid: string, patch: Partial<UserProfile>): P
 
 export async function updatePreferences(
   uid: string,
-  patch: Partial<UserProfile['preferences']>,
+  patch: Partial<Preferences>,
 ): Promise<void> {
   const entries = Object.entries(patch).map(([k, v]) => [`preferences.${k}`, v]);
   await updateDoc(doc(store(), 'users', uid), Object.fromEntries(entries));

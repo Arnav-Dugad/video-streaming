@@ -22,6 +22,11 @@ export async function GET(request: NextRequest) {
     videoDuration: (params.get('duration') as SearchOptions['videoDuration']) ?? 'any',
     publishedAfter: params.get('after') ?? undefined,
     channelId: params.get('channelId') ?? undefined,
+    videoDefinition: (params.get('definition') as SearchOptions['videoDefinition']) ?? undefined,
+    videoCaption: (params.get('caption') as SearchOptions['videoCaption']) ?? undefined,
+    regionCode: params.get('region') ?? undefined,
+    relevanceLanguage: params.get('lang') ?? undefined,
+    safeSearch: (params.get('safe') as SearchOptions['safeSearch']) ?? undefined,
   };
 
   try {

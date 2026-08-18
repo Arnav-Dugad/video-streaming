@@ -14,6 +14,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { ButtonLink, IconButton } from '@/components/ui/Button';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { useUI } from '@/lib/store';
+import { usePreferences } from '@/hooks/usePreferences';
 import { cn } from '@/lib/cn';
 
 /* ==========================================================================
@@ -32,11 +33,21 @@ const NAV = [
   { href: '/rooms', label: 'Rooms', icon: Users },
 ] as const;
 
+/** The chart is region-scoped, so the nav link carries the viewer's own region
+ *  rather than silently defaulting everyone to the US one. Keeping it in the
+ *  URL means the page stays cacheable and the link stays shareable. */
+function navHref(href: string, region: string): string {
+  return href === '/trending' && region && region !== 'US'
+    ? `/trending?region=${region}`
+    : href;
+}
+
 export function Header() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, profile, signOut } = useAuth();
   const openPalette = useUI((s) => s.openPalette);
+  const prefs = usePreferences();
   const navOpen = useUI((s) => s.navOpen);
   const setNavOpen = useUI((s) => s.setNavOpen);
 
@@ -92,7 +103,7 @@ export function Header() {
               return (
                 <Link
                   key={item.href}
-                  href={item.href}
+                  href={navHref(item.href, prefs.region)}
                   className={cn(
                     'relative rounded-lg px-3 py-2 text-[13.5px] font-medium transition-colors duration-300',
                     active ? 'text-cream' : 'text-muted hover:text-cream-dim',

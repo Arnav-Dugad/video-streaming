@@ -1,6 +1,6 @@
 import 'server-only';
 
-import type { Channel, Comment, Paged, Video } from './types';
+import type { Channel, Comment, Paged, PlaylistSummary, Video } from './types';
 import { parseISODuration } from './format';
 import { DEMO_CATALOGUE, demoChannels, demoComments } from './demo-catalogue';
 
@@ -145,6 +145,35 @@ function mapChannel(item: any): Channel {
   };
 }
 
+/** search.list?type=channel returns the channel id under id.channelId and only
+ *  a snippet — no statistics. `hydrateChannels` fills those in. */
+function mapSearchChannel(item: any): Channel {
+  const sn = item.snippet ?? {};
+  return {
+    id: typeof item.id === 'string' ? item.id : item.id?.channelId ?? '',
+    title: decodeEntities(sn.title ?? sn.channelTitle ?? ''),
+    description: sn.description ?? '',
+    avatar: pickThumb(sn.thumbnails, 'high', 'medium', 'default'),
+    publishedAt: sn.publishedAt,
+  };
+}
+
+function mapPlaylist(item: any): PlaylistSummary {
+  const sn = item.snippet ?? {};
+  return {
+    id: typeof item.id === 'string' ? item.id : item.id?.playlistId ?? '',
+    title: decodeEntities(sn.title ?? ''),
+    description: sn.description ?? '',
+    thumbnail: pickThumb(sn.thumbnails, 'high', 'medium', 'default'),
+    channelId: sn.channelId ?? '',
+    channelTitle: decodeEntities(sn.channelTitle ?? ''),
+    publishedAt: sn.publishedAt ?? '',
+    itemCount: item.contentDetails?.itemCount !== undefined
+      ? Number(item.contentDetails.itemCount)
+      : undefined,
+  };
+}
+
 function mapComment(item: any): Comment {
   const top = item.snippet?.topLevelComment?.snippet ?? {};
   return {
@@ -197,8 +226,19 @@ export interface SearchOptions {
   /** 'any' | 'short' (<4m) | 'medium' (4–20m) | 'long' (>20m) */
   videoDuration?: 'any' | 'short' | 'medium' | 'long';
   publishedAfter?: string;
+  publishedBefore?: string;
   channelId?: string;
   type?: 'video' | 'channel' | 'playlist';
+  /** 'high' restricts to HD. There is no 4K filter in the API — the UI models
+   *  it as HD plus a client-side pass over the returned definitions. */
+  videoDefinition?: 'any' | 'high' | 'standard';
+  videoCaption?: 'any' | 'closedCaption' | 'none';
+  videoEmbeddable?: boolean;
+  /** ISO 3166-1 alpha-2. Biases results to a country's catalogue. */
+  regionCode?: string;
+  /** ISO 639-1. Biases results to a language. */
+  relevanceLanguage?: string;
+  safeSearch?: 'none' | 'moderate' | 'strict';
 }
 
 export async function searchVideos(opts: SearchOptions): Promise<Paged<Video>> {
@@ -215,9 +255,19 @@ export async function searchVideos(opts: SearchOptions): Promise<Paged<Video>> {
           order: opts.order ?? 'relevance',
           videoDuration: opts.videoDuration && opts.videoDuration !== 'any' ? opts.videoDuration : undefined,
           publishedAfter: opts.publishedAfter,
+          publishedBefore: opts.publishedBefore,
           channelId: opts.channelId,
-          videoEmbeddable: opts.type === 'video' || !opts.type ? 'true' : undefined,
-          safeSearch: 'moderate',
+          videoDefinition: opts.videoDefinition && opts.videoDefinition !== 'any' ? opts.videoDefinition : undefined,
+          videoCaption: opts.videoCaption && opts.videoCaption !== 'any' ? opts.videoCaption : undefined,
+          regionCode: opts.regionCode,
+          relevanceLanguage: opts.relevanceLanguage,
+          // Only videos can be filtered to embeddable ones; sending it for a
+          // channel or playlist search makes the API reject the whole request.
+          videoEmbeddable:
+            opts.videoEmbeddable === false
+              ? undefined
+              : opts.type === 'video' || !opts.type ? 'true' : undefined,
+          safeSearch: opts.safeSearch ?? 'moderate',
         },
         { revalidate: 600 },
       );
@@ -304,6 +354,113 @@ export async function getTrending(
       return (page.items ?? []).map(mapVideo);
     },
     () => demoTrending(categoryId, maxResults),
+  );
+}
+
+/**
+ * Channel search.
+ *
+ * search.list returns only a snippet for channels — no subscriber count, no
+ * video count — so results are hydrated through one channels.list call, which
+ * costs a single quota unit for up to fifty channels.
+ */
+export async function searchChannels(
+  q: string,
+  pageToken?: string,
+  maxResults = 20,
+): Promise<Paged<Channel>> {
+  return withFallback(
+    async () => {
+      const page = await ytFetch<{ items: unknown[]; nextPageToken?: string; pageInfo?: { totalResults: number } }>(
+        'search',
+        { part: 'snippet', q, type: 'channel', maxResults, pageToken, safeSearch: 'moderate' },
+        { revalidate: 900 },
+      );
+
+      const shallow = (page.items ?? []).map(mapSearchChannel).filter((c) => c.id);
+      const detailed = await getChannelsByIds(shallow.map((c) => c.id)).catch(() => [] as Channel[]);
+      const byId = new Map(detailed.map((c) => [c.id, c]));
+
+      return {
+        items: shallow.map((c) => ({ ...c, ...(byId.get(c.id) ?? {}) })),
+        nextPageToken: page.nextPageToken,
+        totalResults: page.pageInfo?.totalResults,
+      };
+    },
+    () => ({ items: demoChannelSearch(q, maxResults) }),
+  );
+}
+
+/** Playlist search. */
+export async function searchPlaylists(
+  q: string,
+  pageToken?: string,
+  maxResults = 20,
+): Promise<Paged<PlaylistSummary>> {
+  return withFallback(
+    async () => {
+      const page = await ytFetch<{ items: unknown[]; nextPageToken?: string; pageInfo?: { totalResults: number } }>(
+        'search',
+        { part: 'snippet', q, type: 'playlist', maxResults, pageToken, safeSearch: 'moderate' },
+        { revalidate: 900 },
+      );
+      const result: Paged<PlaylistSummary> = {
+        items: (page.items ?? []).map(mapPlaylist).filter((p) => p.id),
+        nextPageToken: page.nextPageToken,
+        totalResults: page.pageInfo?.totalResults,
+      };
+      return result;
+    },
+    // The seeded catalogue has no playlists to stand in for real ones.
+    () => ({ items: [] as PlaylistSummary[] }),
+  );
+}
+
+/** A channel's own public playlists. Costs 1 unit, unlike a search. */
+export async function getChannelPlaylists(
+  channelId: string,
+  maxResults = 24,
+): Promise<PlaylistSummary[]> {
+  return withFallback(
+    async () => {
+      const page = await ytFetch<{ items: unknown[] }>(
+        'playlists',
+        { part: 'snippet,contentDetails', channelId, maxResults },
+        { revalidate: 3600 },
+      );
+      return (page.items ?? []).map(mapPlaylist).filter((p) => p.id);
+    },
+    () => [],
+  );
+}
+
+/** Resolves a playlist and its videos. */
+export async function getPlaylist(
+  playlistId: string,
+): Promise<{ playlist: PlaylistSummary | null; videos: Video[] }> {
+  return withFallback(
+    async () => {
+      const [meta, items] = await Promise.all([
+        ytFetch<{ items: unknown[] }>(
+          'playlists',
+          { part: 'snippet,contentDetails', id: playlistId },
+          { revalidate: 3600 },
+        ),
+        ytFetch<{ items: { contentDetails?: { videoId: string } }[] }>(
+          'playlistItems',
+          { part: 'contentDetails', playlistId, maxResults: 50 },
+          { revalidate: 1800 },
+        ),
+      ]);
+
+      const playlist = (meta.items ?? [])[0] ? mapPlaylist((meta.items ?? [])[0]) : null;
+      const ids = (items.items ?? [])
+        .map((i) => i.contentDetails?.videoId)
+        .filter((x): x is string => Boolean(x));
+
+      return { playlist, videos: await getVideosByIds(ids) };
+    },
+    () => ({ playlist: null, videos: [] }),
   );
 }
 
@@ -514,6 +671,16 @@ function demoSearch(q: string, limit: number): Video[] {
   // Never dead-end on an empty result in demo mode — fall back to popularity.
   const results = scored.length > 0 ? scored.map((x) => x.v) : DEMO_CATALOGUE;
   return results.slice(0, limit);
+}
+
+function demoChannelSearch(q: string, limit: number): Channel[] {
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const all = demoChannels();
+  if (terms.length === 0) return all.slice(0, limit);
+  const matched = all.filter((c) =>
+    terms.some((t) => c.title.toLowerCase().includes(t) || c.description.toLowerCase().includes(t)),
+  );
+  return (matched.length > 0 ? matched : all).slice(0, limit);
 }
 
 function demoTrending(categoryId: string | undefined, limit: number): Video[] {

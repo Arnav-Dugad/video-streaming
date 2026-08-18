@@ -11,6 +11,7 @@ import {
 import { useUI, usePlayer } from '@/lib/store';
 import { useKeyboard } from '@/hooks/useKeyboard';
 import { useDebounced } from '@/hooks/useDebounced';
+import { useSearchDefaults } from '@/hooks/usePreferences';
 import { Thumbnail } from '@/components/ui/Thumbnail';
 import { formatDuration, viewLabel } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -93,6 +94,7 @@ function PaletteDialog({ onClose }: { onClose(): void }) {
   const listRef = useRef<HTMLDivElement>(null);
   const abort = useRef<AbortController | null>(null);
   const debounced = useDebounced(query, 220);
+  const searchDefaults = useSearchDefaults();
 
   const close = onClose;
 
@@ -125,14 +127,15 @@ function PaletteDialog({ onClose }: { onClose(): void }) {
         setResults((prev) => ({ ...prev, q: term, suggestions: d.suggestions ?? [] })))
       .catch(() => { /* aborted or unavailable */ });
 
-    fetch(`/api/search?q=${encodeURIComponent(term)}&limit=6`, { signal: controller.signal })
+    const qs = new URLSearchParams({ q: term, limit: '6', ...searchDefaults });
+    fetch(`/api/search?${qs}`, { signal: controller.signal })
       .then((r) => r.json())
       .then((d: { items?: Video[] }) =>
         setResults((prev) => ({ q: term, suggestions: prev.q === term ? prev.suggestions : [], videos: d.items ?? [] })))
       .catch(() => { /* aborted or unavailable */ });
 
     return () => controller.abort();
-  }, [term, searchable]);
+  }, [term, searchable, searchDefaults]);
 
   // Only ever show results that belong to the term currently on screen.
   // Memoised because these feed a useMemo below — a fresh [] each render would

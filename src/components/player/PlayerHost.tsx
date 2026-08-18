@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { animate, motion, useMotionValue } from 'motion/react';
+import { animate, motion, useMotionValue, useMotionValueEvent, useTransform } from 'motion/react';
 import { Maximize2, Minimize2, X, SkipForward } from 'lucide-react';
 
 import { loadYouTubeApi, PlayerState, type YTPlayer } from '@/hooks/useYouTubeApi';
@@ -11,6 +11,7 @@ import { useAuth } from '@/components/providers/AuthProvider';
 import { historyEntryFrom, recordProgress } from '@/lib/db';
 import { useIsMobile } from '@/hooks/useMediaQuery';
 import { useAmbientPalette } from '@/hooks/useAmbientPalette';
+import { usePreferences } from '@/hooks/usePreferences';
 import { PlayerControls } from './PlayerControls';
 import { cn } from '@/lib/cn';
 
@@ -28,6 +29,22 @@ import { cn } from '@/lib/cn';
      · slot movement -> written instantly (scrolling must not lag by a frame)
    Springing during scroll is the thing that makes these players feel broken.
    ========================================================================== */
+
+/* ==========================================================================
+   Why the embed is rendered oversized.
+
+   YouTube's adaptive streaming picks its rendition from the size of the
+   player's *own* viewport — the window inside the iframe. An 854px-wide
+   iframe is offered 480p and 720p and nothing above, no matter what
+   setPlaybackQuality is told, which is why embeds appear to be capped.
+
+   A CSS transform does not change a frame's inner window size. So the iframe
+   is given a real 1920x1080 box and scaled down to fit visually: YouTube sees
+   a 1080p-class player and offers 1080p and up, while the layout is unchanged.
+   Above 1920 the container is already large enough and it renders natively.
+   ========================================================================== */
+const VIRTUAL_WIDTH = 1920;
+const VIRTUAL_HEIGHT = 1080;
 
 const DOCK_WIDTH = 384;
 const DOCK_MARGIN = 20;
@@ -59,9 +76,14 @@ export function PlayerHost() {
   const router = useRouter();
   const pathname = usePathname();
   const mobile = useIsMobile();
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
+  const prefs = usePreferences();
+  // When history is paused nothing is written, so Continue Watching stops
+  // updating too — which is the honest meaning of the setting.
+  const recording = Boolean(user) && !prefs.pauseHistory;
 
   const video = usePlayer((s) => s.video);
+  const highRes = usePlayer((s) => s.highRes);
   const slot = usePlayer((s) => s.slot);
   const mode = usePlayer((s) => s.mode);
   const ambient = usePlayer((s) => s.ambient);
@@ -85,17 +107,6 @@ export function PlayerHost() {
     ambient && mode === 'inline',
   );
 
-  // Saved preferences only exist once the profile has loaded, which is after
-  // the store has already been initialised with its defaults.
-  useEffect(() => {
-    if (!profile) return;
-    const s = usePlayer.getState();
-    s.setAmbient(profile.preferences.ambientGlow);
-    if (profile.preferences.defaultQuality) {
-      s.setQuality(profile.preferences.defaultQuality, s.actualQuality);
-    }
-  }, [profile]);
-
   /* --------------------------- positioning ------------------------------ */
 
   const top = useMotionValue(0);
@@ -105,6 +116,21 @@ export function PlayerHost() {
   const radius = useMotionValue(14);
   const lastMode = useRef<string>('');
   const positioned = useRef(false);
+
+  /* The scale factor rides a motion value rather than React state: width
+     changes on every frame of the dock/undock spring, and mirroring that into
+     state would re-render the whole host sixty times a second.
+
+     Whether to oversize at all is a separate, coarse decision — it only flips
+     when the surface crosses the virtual width — so that one *is* state, and
+     it settles almost immediately. */
+  const surfaceScale = useTransform(width, (w) => (w > 0 ? w / VIRTUAL_WIDTH : 1));
+  const [surfaceExceedsVirtual, setSurfaceExceedsVirtual] = useState(false);
+
+  useMotionValueEvent(width, 'change', (w) => {
+    const exceeds = w >= VIRTUAL_WIDTH;
+    if (exceeds !== surfaceExceedsVirtual) setSurfaceExceedsVirtual(exceeds);
+  });
 
   const applyRect = useCallback(
     (r: Rect, animated: boolean, corner: number) => {
@@ -272,7 +298,7 @@ export function PlayerHost() {
       // Persist watch position at most once every 8s, and only while actually
       // playing — otherwise a paused tab writes to Firestore forever.
       const now = Date.now();
-      if (user && usePlayer.getState().playing && position > 5 && now - lastWrite.current > 8000) {
+      if (recording && user && usePlayer.getState().playing && position > 5 && now - lastWrite.current > 8000) {
         lastWrite.current = now;
         recordProgress(
           user.uid,
@@ -282,11 +308,11 @@ export function PlayerHost() {
     }, 250);
 
     return () => clearInterval(id);
-  }, [video, user, setProgress]);
+  }, [video, user, recording, setProgress]);
 
   // Flush the final position when the tab goes away.
   useEffect(() => {
-    if (!video || !user) return;
+    if (!video || !user || !recording) return;
     const flush = () => {
       const p = playerRef.current;
       if (!p?.getCurrentTime) return;
@@ -304,7 +330,7 @@ export function PlayerHost() {
       window.removeEventListener('pagehide', flush);
       flush();
     };
-  }, [video, user]);
+  }, [video, user, recording]);
 
   /* ------------------------------- render ------------------------------- */
 
@@ -312,6 +338,10 @@ export function PlayerHost() {
 
   const docked = mode === 'docked';
   const theatre = mode === 'theatre';
+
+  // Not worth it for a corner dock, and pointless once the surface is already
+  // 1920 wide — at that size the embed asks for a high rendition by itself.
+  const oversized = highRes && !docked && !surfaceExceedsVirtual;
 
   return (
     <>
@@ -361,7 +391,21 @@ export function PlayerHost() {
           />
         )}
 
-        <div ref={mountRef} className="absolute inset-0 [&_iframe]:h-full [&_iframe]:w-full [&_iframe]:border-0" />
+        {/* The oversized-then-scaled surface. `overflow-hidden` on the parent
+            keeps the untransformed corner from spilling, and pointer events
+            are disabled so every click lands on our own controls instead of
+            YouTube's invisible chrome underneath. */}
+        <div className="absolute inset-0 overflow-hidden">
+          <motion.div
+            ref={mountRef}
+            className="pointer-events-none origin-top-left [&_iframe]:h-full [&_iframe]:w-full [&_iframe]:border-0"
+            style={
+              oversized
+                ? { width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT, scale: surfaceScale }
+                : { width: '100%', height: '100%' }
+            }
+          />
+        </div>
 
         {apiError?.videoId === video.id && (
           <div className="absolute inset-0 z-20 grid place-items-center bg-ink-900/95 p-6 text-center">

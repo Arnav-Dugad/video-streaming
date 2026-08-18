@@ -11,10 +11,10 @@ import { useEffect, useState } from 'react';
    another origin's compositor. Anyone claiming otherwise is describing a
    same-origin <video>, which this is not.
 
-   What *is* reachable is the thumbnail, and routing it through Next's image
-   optimiser makes it same-origin, so a canvas built from it is not tainted.
-   Sampling a 32x18 downscale gives the frame's dominant colours in about a
-   millisecond.
+   What *is* reachable is the thumbnail. i.ytimg.com sends no CORS headers, so
+   it is pulled through /api/thumb — a pass-through proxy that adds them —
+   which keeps the canvas untainted. Sampling a 32x18 downscale gives the
+   frame's dominant colours in about a millisecond.
 
    This replaces a `filter: blur(70px)` over a 1280px bitmap — one of the most
    expensive things you can ask a compositor to do every frame — with three
@@ -30,9 +30,11 @@ export interface Ambient {
 
 const FALLBACK: Ambient['colors'] = ['#2a1f1c', '#1a1f2e', '#241a24'];
 
-/** Next's optimiser only accepts widths from its configured size list. */
-function optimised(src: string, width = 64): string {
-  return `/_next/image?url=${encodeURIComponent(src)}&w=${width}&q=50`;
+/** The proxy takes a video id, not a URL, so this endpoint can never be
+ *  pointed at an arbitrary host. */
+function proxied(src: string): string | null {
+  const id = /\/vi\/([\w-]{6,20})\//.exec(src)?.[1];
+  return id ? `/api/thumb?v=${id}&size=mqdefault` : null;
 }
 
 export function useAmbientPalette(src: string | undefined, enabled = true): Ambient {
@@ -40,6 +42,8 @@ export function useAmbientPalette(src: string | undefined, enabled = true): Ambi
 
   useEffect(() => {
     if (!enabled || !src) return;
+    const url = proxied(src);
+    if (!url) return;
     let alive = true;
 
     const img = new Image();
@@ -60,14 +64,14 @@ export function useAmbientPalette(src: string | undefined, enabled = true): Ambi
         const colors = dominant(data);
         if (colors) setAmbient({ colors, ready: true });
       } catch {
-        // A tainted canvas means the optimiser was bypassed; the caller keeps
-        // the fallback palette, which is a valid look rather than a failure.
+        // A tainted canvas or a blocked proxy leaves the caller on the
+        // fallback palette, which is a valid look rather than a failure.
       }
     };
 
     // A dead thumbnail is not worth reporting — the fallback palette stands.
     img.onerror = () => {};
-    img.src = optimised(src);
+    img.src = url;
 
     return () => { alive = false; img.onload = null; img.onerror = null; };
   }, [src, enabled]);

@@ -12,6 +12,7 @@ import { PageShell } from '@/components/layout/PageShell';
 import { PlayerHost } from '@/components/player/PlayerHost';
 import { Cursor } from '@/components/ui/Cursor';
 import { ServiceWorker } from '@/components/layout/ServiceWorker';
+import { PreferenceEffects } from '@/components/providers/PreferenceEffects';
 import { Toaster } from '@/components/ui/Toaster';
 import { SITE_URL } from '@/lib/site';
 
@@ -97,6 +98,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Toaster />
           <Cursor />
           <ServiceWorker />
+          <PreferenceEffects />
         </AuthProvider>
       </body>
     </html>

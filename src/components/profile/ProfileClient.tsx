@@ -3,24 +3,49 @@
 import { Suspense, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'motion/react';
-import { Check, Keyboard, Loader2, LogOut, Sparkles } from 'lucide-react';
+import { Check, Keyboard, Loader2, LogOut, Sparkles, Trash2 } from 'lucide-react';
 
 import { useAuth } from '@/components/providers/AuthProvider';
 import { updateProfile } from '@/lib/db';
 import { PageHeader, EmptyState } from '@/components/ui/PageHeader';
 import { Button, ButtonLink } from '@/components/ui/Button';
+import { usePreferences } from '@/hooks/usePreferences';
 import { Avatar } from '@/components/ui/Avatar';
 import { formatDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { toast, useUI, usePlayer } from '@/lib/store';
 import { qualityLabel } from '@/lib/player-modules';
 import { YouTubeConnection } from './YouTubeConnection';
-import type { UserProfile } from '@/lib/types';
+import type { Preferences, UserProfile } from '@/lib/types';
 
 /** Offered up front rather than read from the player, since this page is not
  *  necessarily showing one. The player's own menu lists exactly what the
  *  current video publishes. */
 const QUALITY_CHOICES = ['auto', 'hd2160', 'hd1440', 'hd1080', 'hd720', 'large', 'medium', 'small'];
+const SPEED_CHOICES = [0.75, 1, 1.25, 1.5, 1.75, 2];
+const SKIP_CHOICES = [5, 10, 15, 30];
+
+/** The regions YouTube publishes a trending chart for, which is a shorter list
+ *  than its full country coverage. */
+const REGION_CHOICES = [
+  { value: 'US', label: 'United States' }, { value: 'GB', label: 'United Kingdom' },
+  { value: 'IN', label: 'India' }, { value: 'CA', label: 'Canada' },
+  { value: 'AU', label: 'Australia' }, { value: 'DE', label: 'Germany' },
+  { value: 'FR', label: 'France' }, { value: 'BR', label: 'Brazil' },
+  { value: 'JP', label: 'Japan' }, { value: 'KR', label: 'South Korea' },
+  { value: 'MX', label: 'Mexico' }, { value: 'ES', label: 'Spain' },
+  { value: 'IT', label: 'Italy' }, { value: 'NL', label: 'Netherlands' },
+  { value: 'ZA', label: 'South Africa' }, { value: 'NG', label: 'Nigeria' },
+];
+
+const LANGUAGE_CHOICES = [
+  { value: 'en', label: 'English' }, { value: 'hi', label: 'Hindi' },
+  { value: 'es', label: 'Spanish' }, { value: 'pt', label: 'Portuguese' },
+  { value: 'fr', label: 'French' }, { value: 'de', label: 'German' },
+  { value: 'ja', label: 'Japanese' }, { value: 'ko', label: 'Korean' },
+  { value: 'ar', label: 'Arabic' }, { value: 'ru', label: 'Russian' },
+  { value: 'it', label: 'Italian' }, { value: 'id', label: 'Indonesian' },
+];
 
 const INTERESTS = [
   'Music', 'Technology', 'Science', 'Film', 'Gaming', 'Cooking', 'Design',
@@ -74,6 +99,10 @@ function ProfileForm({ profile, uid }: { profile: UserProfile; uid: string }) {
   const toggleShortcuts = useUI((s) => s.toggleShortcuts);
   const setAmbient = usePlayer((s) => s.setAmbient);
   const setPlayerQuality = usePlayer((s) => s.setQuality);
+  const clearSearches = useUI((s) => s.clearSearches);
+  // Merged with defaults, so a profile written by an older build still reads
+  // every setting rather than showing blanks.
+  const prefs = usePreferences();
 
   const [name, setName] = useState(profile.displayName);
   const [bio, setBio] = useState(profile.bio ?? '');
@@ -179,55 +208,45 @@ function ProfileForm({ profile, uid }: { profile: UserProfile; uid: string }) {
               <Toggle
                 label="Autoplay the next video"
                 hint="Plays the top of the Up next queue when a video ends."
-                value={profile.preferences.autoplay}
+                value={prefs.autoplay}
                 onChange={(v) => setPreference('autoplay', v)}
               />
               <Toggle
-                label="Ambient glow"
-                hint="Bleeds a blurred copy of the frame past the player's edges."
-                value={profile.preferences.ambientGlow}
-                onChange={(v) => { setPreference('ambientGlow', v); setAmbient(v); }}
+                label="High resolution"
+                hint="Renders the embed at 1920×1080 and scales it to fit. YouTube picks its rendition from the player's own size, so without this the embed is effectively capped at 720p. Costs more bandwidth."
+                value={prefs.highRes}
+                onChange={(v) => setPreference('highRes', v)}
               />
               <Toggle
-                label="Reduce motion"
-                hint="Cuts parallax, hover previews and page transitions. Your system setting is always respected on top of this."
-                value={profile.preferences.reduceMotion}
-                onChange={(v) => setPreference('reduceMotion', v)}
+                label="Theatre mode by default"
+                hint="Opens every watch page with the player expanded."
+                value={prefs.theatreByDefault}
+                onChange={(v) => setPreference('theatreByDefault', v)}
               />
 
-              <div className="py-4">
-                <p className="text-[13.5px] text-cream">Preferred quality</p>
-                <p className="mt-1 max-w-md text-[12px] leading-relaxed text-muted">
-                  Applied to every video as it starts. YouTube&apos;s adaptive
-                  streaming can still override it when bandwidth or window size
-                  demand — the player says so when that happens.
-                </p>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {QUALITY_CHOICES.map((q) => {
-                    const on = profile.preferences.defaultQuality === q;
-                    return (
-                      <button
-                        key={q}
-                        onClick={() => {
-                          setPreference('defaultQuality', q);
-                          // Take effect on the currently playing video too,
-                          // rather than only on the next one.
-                          setPlayerQuality(q, q);
-                        }}
-                        aria-pressed={on}
-                        className={cn(
-                          'rounded-lg border px-3 py-1.5 font-mono text-[11.5px] transition-[background-color,border-color,color] duration-250',
-                          on
-                            ? 'border-flare/45 bg-flare/12 text-flare'
-                            : 'border-line text-cream-dim hover:border-line-strong hover:text-cream',
-                        )}
-                      >
-                        {qualityLabel(q)}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              <Choice
+                label="Preferred quality"
+                hint="Applied as each video starts. YouTube's adaptive streaming can still override it when bandwidth or window size demand — the player says so when that happens."
+                value={prefs.defaultQuality}
+                options={QUALITY_CHOICES.map((q) => ({ value: q, label: qualityLabel(q) }))}
+                onChange={(v) => { setPreference('defaultQuality', v); setPlayerQuality(v, v); }}
+              />
+
+              <Choice
+                label="Default speed"
+                hint="Every video starts at this rate."
+                value={String(prefs.defaultSpeed)}
+                options={SPEED_CHOICES.map((v) => ({ value: String(v), label: v === 1 ? 'Normal' : `${v}\u00d7` }))}
+                onChange={(v) => setPreference('defaultSpeed', Number(v))}
+              />
+
+              <Choice
+                label="Skip interval"
+                hint="How far the skip buttons and the J / L keys jump."
+                value={String(prefs.skipInterval)}
+                options={SKIP_CHOICES.map((v) => ({ value: String(v), label: `${v}s` }))}
+                onChange={(v) => setPreference('skipInterval', Number(v))}
+              />
             </div>
 
             <button
@@ -236,6 +255,98 @@ function ProfileForm({ profile, uid }: { profile: UserProfile; uid: string }) {
             >
               <Keyboard className="h-4 w-4" /> View keyboard shortcuts
             </button>
+          </Section>
+
+          <Section
+            title="Content"
+            description="Where results come from. Region also sets the chart the Trending link opens."
+          >
+            <div className="max-w-lg divide-y divide-line">
+              <Choice
+                label="Region"
+                hint="Drives the trending chart and biases search toward a country's catalogue."
+                value={prefs.region}
+                options={REGION_CHOICES}
+                onChange={(v) => setPreference('region', v)}
+              />
+              <Choice
+                label="Language"
+                hint="Biases search relevance. It does not filter results outright — YouTube has no hard language filter."
+                value={prefs.language}
+                options={LANGUAGE_CHOICES}
+                onChange={(v) => setPreference('language', v)}
+              />
+              <Choice
+                label="Safe search"
+                hint="Applied to every search PRISM runs on your behalf."
+                value={prefs.safeSearch}
+                options={[
+                  { value: 'none', label: 'Off' },
+                  { value: 'moderate', label: 'Moderate' },
+                  { value: 'strict', label: 'Strict' },
+                ]}
+                onChange={(v) => setPreference('safeSearch', v as Preferences['safeSearch'])}
+              />
+            </div>
+          </Section>
+
+          <Section title="Interface" description="How much the interface moves.">
+            <div className="max-w-lg divide-y divide-line">
+              <Toggle
+                label="Reduce motion"
+                hint="Cuts parallax, hover previews, the cursor companion and page transitions. Your system setting is always respected on top of this."
+                value={prefs.reduceMotion}
+                onChange={(v) => setPreference('reduceMotion', v)}
+              />
+              <Toggle
+                label="Hover previews"
+                hint="Plays a muted preview after resting on a card for a moment."
+                value={prefs.hoverPreviews}
+                onChange={(v) => setPreference('hoverPreviews', v)}
+              />
+              <Toggle
+                label="Ambient glow"
+                hint="Bleeds the frame's dominant colours past the player's edges."
+                value={prefs.ambientGlow}
+                onChange={(v) => { setPreference('ambientGlow', v); setAmbient(v); }}
+              />
+              <Toggle
+                label="Cursor companion"
+                hint="The trailing ring that grows over anything clickable."
+                value={prefs.cursorCompanion}
+                onChange={(v) => setPreference('cursorCompanion', v)}
+              />
+              <Toggle
+                label="Film grain"
+                hint="A faint 35mm grain over the whole interface."
+                value={prefs.filmGrain}
+                onChange={(v) => setPreference('filmGrain', v)}
+              />
+            </div>
+          </Section>
+
+          <Section title="Privacy" description="What PRISM records about your watching.">
+            <div className="max-w-lg divide-y divide-line">
+              <Toggle
+                label="Pause watch history"
+                hint="Stops recording where you stopped. Continue watching stops updating too, and nothing new appears in History."
+                value={prefs.pauseHistory}
+                onChange={(v) => setPreference('pauseHistory', v)}
+              />
+            </div>
+
+            <div className="mt-6 flex flex-wrap gap-2">
+              <Button
+                onClick={() => { clearSearches(); toast('Recent searches cleared', { tone: 'success' }); }}
+                variant="outline"
+                size="sm"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Clear recent searches
+              </Button>
+              <ButtonLink href="/library?tab=history" variant="ghost" size="sm">
+                Manage watch history
+              </ButtonLink>
+            </div>
           </Section>
 
           <Section
@@ -294,6 +405,43 @@ function Section({
       <p className="mt-1.5 max-w-lg text-[13px] leading-relaxed text-muted">{description}</p>
       <div className="mt-6">{children}</div>
     </section>
+  );
+}
+
+function Choice({
+  label, hint, value, options, onChange,
+}: {
+  label: string;
+  hint: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange(v: string): void;
+}) {
+  return (
+    <div className="py-4">
+      <p className="text-[13.5px] text-cream">{label}</p>
+      <p className="mt-1 max-w-md text-[12px] leading-relaxed text-muted">{hint}</p>
+      <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label={label}>
+        {options.map((opt) => {
+          const on = opt.value === value;
+          return (
+            <button
+              key={opt.value}
+              onClick={() => onChange(opt.value)}
+              aria-pressed={on}
+              className={cn(
+                'rounded-lg border px-3 py-1.5 font-mono text-[11.5px] transition-[background-color,border-color,color] duration-250',
+                on
+                  ? 'border-flare/45 bg-flare/12 text-flare'
+                  : 'border-line text-cream-dim hover:border-line-strong hover:text-cream',
+              )}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

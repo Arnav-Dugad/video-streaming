@@ -12,6 +12,7 @@ import {
 import { usePlayer } from '@/lib/store';
 import { formatDuration, extractChapters, type Chapter } from '@/lib/format';
 import { useKeyboard } from '@/hooks/useKeyboard';
+import { usePreferences } from '@/hooks/usePreferences';
 import { cn } from '@/lib/cn';
 import type { YTPlayer } from '@/hooks/useYouTubeApi';
 import { toast } from '@/lib/store';
@@ -44,6 +45,8 @@ interface Props {
 
 export function PlayerControls({ api, compact, onExitTheatre }: Props) {
   const router = useRouter();
+  const prefs = usePreferences();
+  const skip = prefs.skipInterval;
   const video = usePlayer((s) => s.video);
   const playing = usePlayer((s) => s.playing);
   const position = usePlayer((s) => s.position);
@@ -284,8 +287,8 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
     [
       { key: ' ', run: toggle },
       { key: 'k', run: toggle },
-      { key: 'j', run: () => nudge(-10) },
-      { key: 'l', run: () => nudge(10) },
+      { key: 'j', run: () => nudge(-skip) },
+      { key: 'l', run: () => nudge(skip) },
       { key: 'arrowleft', run: () => nudge(-5) },
       { key: 'arrowright', run: () => nudge(5) },
       { key: 'arrowup', run: () => changeVolume(Math.min(100, volume + 5)) },
@@ -331,7 +334,7 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
           <Ctl label={playing ? 'Pause' : 'Play'} onClick={toggle} small>
             {playing ? <Pause className="h-3.5 w-3.5 fill-current" /> : <Play className="h-3.5 w-3.5 fill-current" />}
           </Ctl>
-          <Ctl label="Back 10 seconds" onClick={() => nudge(-10)} small>
+          <Ctl label={`Back ${skip} seconds`} onClick={() => nudge(-skip)} small>
             <RotateCcw className="h-3.5 w-3.5" />
           </Ctl>
           <Ctl label={muted ? 'Unmute' : 'Mute'} onClick={toggleMute} small>
@@ -366,7 +369,27 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
         tabIndex={-1}
       />
 
-      {/* Big centred state pulse on play/pause. */}
+      {/* Paused state.
+
+          The scrim is not decoration. With controls=0 YouTube still paints its
+          own overlay when paused — the "More videos" grid, a share button, a
+          watch-later button — inside the iframe, where nothing outside it can
+          turn them off. There is no player parameter that suppresses them.
+          Covering the frame is the only way to keep the paused state looking
+          like this player rather than a YouTube embed wearing a costume. */}
+      <AnimatePresence>
+        {!playing && (
+          <motion.div
+            key="paused-scrim"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="pointer-events-none absolute inset-0 bg-ink-950/70"
+          />
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {!playing && (
           <motion.div
@@ -387,7 +410,7 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
       <motion.div
         animate={{ opacity: visible || scrubbing ? 1 : 0, y: visible || scrubbing ? 0 : 12 }}
         transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-        className="relative bg-gradient-to-t from-ink-950/95 via-ink-950/60 to-transparent px-3 pb-3 pt-16 sm:px-4 sm:pb-4"
+        className="relative bg-gradient-to-t from-ink-950 via-ink-950/88 to-transparent px-3 pb-3 pt-16 sm:px-4 sm:pb-4"
       >
         <Scrubber
           pct={pct}
@@ -405,10 +428,10 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
           <Ctl label={playing ? 'Pause (k)' : 'Play (k)'} onClick={toggle}>
             {playing ? <Pause className="h-[18px] w-[18px] fill-current" /> : <Play className="h-[18px] w-[18px] fill-current" />}
           </Ctl>
-          <Ctl label="Back 10 seconds (j)" onClick={() => nudge(-10)} className="hidden sm:grid">
+          <Ctl label={`Back ${skip} seconds (j)`} onClick={() => nudge(-skip)} className="hidden sm:grid">
             <RotateCcw className="h-4 w-4" />
           </Ctl>
-          <Ctl label="Forward 10 seconds (l)" onClick={() => nudge(10)} className="hidden sm:grid">
+          <Ctl label={`Forward ${skip} seconds (l)`} onClick={() => nudge(skip)} className="hidden sm:grid">
             <RotateCw className="h-4 w-4" />
           </Ctl>
           {queue.length > 0 && (

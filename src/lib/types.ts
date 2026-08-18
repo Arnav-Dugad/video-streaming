@@ -35,6 +35,19 @@ export interface Channel {
   publishedAt?: string;
 }
 
+/** A YouTube playlist, as returned by search or by a channel listing. */
+export interface PlaylistSummary {
+  id: string;
+  title: string;
+  description: string;
+  thumbnail: string;
+  channelId: string;
+  channelTitle: string;
+  publishedAt: string;
+  /** Absent on search results; present when listed via playlists.list. */
+  itemCount?: number;
+}
+
 export interface Comment {
   id: string;
   author: string;
@@ -64,13 +77,45 @@ export interface UserProfile {
   createdAt: number;
   /** Taste vector seeded at onboarding, refined by watch behaviour. */
   interests: string[];
-  preferences: {
-    autoplay: boolean;
-    ambientGlow: boolean;
-    reduceMotion: boolean;
-    /** A YouTube quality id ('hd1080', 'large', …) or 'auto'. */
-    defaultQuality: string;
-  };
+  preferences: Preferences;
+}
+
+/** Every field has a default in DEFAULT_PREFERENCES, and profiles written by
+ *  older builds are merged forward, so adding one here is always safe. */
+export interface Preferences {
+  /* playback */
+  autoplay: boolean;
+  ambientGlow: boolean;
+  reduceMotion: boolean;
+  /** A YouTube quality id ('hd1080', 'large', …) or 'auto'. */
+  defaultQuality: string;
+  /** Render the embed oversized so YouTube offers renditions above 720p. */
+  highRes: boolean;
+  /** Applied to every video as it starts. */
+  defaultSpeed: number;
+  /** Seconds the skip-back / skip-forward controls and J/L jump. */
+  skipInterval: number;
+  /** Open the watch page in theatre mode by default. */
+  theatreByDefault: boolean;
+
+  /* content */
+  /** ISO 3166-1 alpha-2, drives trending and biases search. */
+  region: string;
+  /** ISO 639-1, biases search relevance. */
+  language: string;
+  safeSearch: 'none' | 'moderate' | 'strict';
+
+  /* interface */
+  /** Muted preview playback when hovering a card. */
+  hoverPreviews: boolean;
+  /** The trailing ring that follows the pointer. */
+  cursorCompanion: boolean;
+  /** The 35mm grain overlay. */
+  filmGrain: boolean;
+
+  /* privacy */
+  /** Stop recording watch positions. Continue Watching stops updating too. */
+  pauseHistory: boolean;
 }
 
 export interface HistoryEntry {

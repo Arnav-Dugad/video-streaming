@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, ViewTransition } from 'react';
+import { useEffect, useRef, ViewTransition } from 'react';
 import { usePlayerSlot } from '@/hooks/usePlayerSlot';
 import { usePlayer } from '@/lib/store';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { usePreferences } from '@/hooks/usePreferences';
 import { getProgress } from '@/lib/db';
 import type { Video } from '@/lib/types';
 
@@ -30,7 +31,19 @@ export function WatchStage({ video, upNext, startAt }: Props) {
   const load = usePlayer((s) => s.load);
   const setQueue = usePlayer((s) => s.setQueue);
   const currentId = usePlayer((s) => s.video?.id);
+  const setMode = usePlayer((s) => s.setMode);
   const { user, loading } = useAuth();
+  const prefs = usePreferences();
+
+  // Applied once per video rather than on every render, so leaving theatre
+  // mode mid-video is not immediately undone.
+  const theatredFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!prefs.theatreByDefault) return;
+    if (theatredFor.current === video.id) return;
+    theatredFor.current = video.id;
+    setMode('theatre');
+  }, [prefs.theatreByDefault, video.id, setMode]);
 
   useEffect(() => {
     if (currentId === video.id) { setQueue(upNext); return; }
