@@ -92,10 +92,6 @@ export function Hero({ videos }: { videos: Video[] }) {
     <section
       ref={rootRef}
       className="relative -mt-16 flex min-h-[max(34rem,88svh)] flex-col justify-end overflow-hidden sm:-mt-[68px]"
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
-      onFocusCapture={() => setPaused(true)}
-      onBlurCapture={() => setPaused(false)}
       aria-roledescription="carousel"
       aria-label="Featured"
     >
@@ -125,7 +121,7 @@ export function Hero({ videos }: { videos: Video[] }) {
           {preview && (
             <motion.div
               initial={{ opacity: 0 }}
-              animate={{ opacity: 0.72 }}
+              animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 1.4 }}
               className="absolute inset-0"
@@ -145,14 +141,22 @@ export function Hero({ videos }: { videos: Video[] }) {
 
         {/* Two-axis scrim: vertical for legibility, horizontal so the copy
             column always sits on near-black regardless of the artwork. */}
-        <div className="absolute inset-0 bg-gradient-to-t from-ink-950 via-ink-950/55 to-ink-950/70" />
-        <div className="absolute inset-0 bg-gradient-to-r from-ink-950 via-ink-950/60 to-transparent" />
+        {/* Vertical scrim for the copy at the bottom, horizontal scrim only
+            across the left column where the headline sits. The right side is
+            left almost clear so the footage is actually watchable — two heavy
+            stacked scrims made a playing video look like a still. */}
+        <div className="absolute inset-0 bg-gradient-to-t from-ink-950 via-ink-950/45 to-ink-950/35" />
+        <div className="absolute inset-0 bg-gradient-to-r from-ink-950 via-ink-950/45 via-40% to-transparent" />
       </motion.div>
 
       {/* ------------------------------ copy ----------------------------- */}
       <motion.div
         style={{ y: reduced ? undefined : copyY, opacity: reduced ? undefined : copyOpacity }}
         className="gutter-wide relative pb-10 pt-32 sm:pb-14"
+        onMouseEnter={() => setPaused(true)}
+        onMouseLeave={() => setPaused(false)}
+        onFocusCapture={() => setPaused(true)}
+        onBlurCapture={() => setPaused(false)}
       >
         <div className="max-w-3xl">
           <AnimatePresence mode="wait">
