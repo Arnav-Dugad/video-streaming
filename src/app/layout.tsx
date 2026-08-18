@@ -11,6 +11,7 @@ import { ScrollProgress } from '@/components/layout/ScrollProgress';
 import { PageShell } from '@/components/layout/PageShell';
 import { PlayerHost } from '@/components/player/PlayerHost';
 import { Cursor } from '@/components/ui/Cursor';
+import { ServiceWorker } from '@/components/layout/ServiceWorker';
 import { Toaster } from '@/components/ui/Toaster';
 import { SITE_URL } from '@/lib/site';
 
@@ -49,9 +50,13 @@ export const metadata: Metadata = {
   },
   robots: { index: true, follow: true },
   icons: {
-    icon: [{ url: '/icon.svg', type: 'image/svg+xml' }],
-    apple: '/icon.svg',
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/icon-192.png', type: 'image/png', sizes: '192x192' },
+    ],
+    apple: '/apple-icon.png',
   },
+  appleWebApp: { capable: true, title: 'PRISM', statusBarStyle: 'black-translucent' },
 };
 
 export const viewport: Viewport = {
@@ -91,6 +96,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <ShortcutsSheet />
           <Toaster />
           <Cursor />
+          <ServiceWorker />
         </AuthProvider>
       </body>
     </html>
