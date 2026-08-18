@@ -1,0 +1,318 @@
+@import 'tailwindcss';
+
+/* ==========================================================================
+   PRISM — design tokens
+   A cinema-first palette: bituminous inks, paper cream, one vermilion signal.
+   ========================================================================== */
+
+@theme {
+  /* -- surfaces: cool near-black, never pure #000 (banding + OLED smear) -- */
+  --color-ink-950: #060608;
+  --color-ink-900: #0a0a0d;
+  --color-ink-850: #0e0e12;
+  --color-ink-800: #131318;
+  --color-ink-700: #1a1a21;
+  --color-ink-600: #24242d;
+  --color-ink-500: #32323d;
+
+  /* -- type: warm paper, reads softer than white against ink -- */
+  --color-cream: #f4f1ea;
+  --color-cream-dim: #c9c5bc;
+  --color-muted: #8b877e;
+  --color-faint: #5a574f;
+
+  /* -- signal: vermilion. Used for one thing per screen, never decoration -- */
+  --color-flare: #ff4a2e;
+  --color-flare-soft: #ff7757;
+  --color-flare-deep: #c22d16;
+
+  /* -- secondary signals -- */
+  --color-halo: #9db4ff;
+  --color-live: #ff2d55;
+  --color-mint: #4fd6a0;
+
+  --color-line: rgb(244 241 234 / 0.09);
+  --color-line-strong: rgb(244 241 234 / 0.16);
+
+  /* -- type scale -- */
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-display: var(--font-instrument), ui-serif, Georgia, serif;
+
+  /* -- motion: one shared easing language -- */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --radius-card: 14px;
+
+  --shadow-lift: 0 1px 1px rgb(0 0 0 / 0.3), 0 8px 24px -8px rgb(0 0 0 / 0.6);
+  --shadow-float: 0 2px 4px rgb(0 0 0 / 0.35), 0 24px 60px -18px rgb(0 0 0 / 0.75);
+
+  --animate-shimmer: shimmer 1.9s ease-in-out infinite;
+  --animate-drift: drift 24s ease-in-out infinite alternate;
+  --animate-pulse-ring: pulse-ring 2.4s var(--ease-out-quint) infinite;
+}
+
+@keyframes shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+@keyframes drift {
+  from { transform: translate3d(-2%, -1%, 0) scale(1.05); }
+  to   { transform: translate3d(2%, 2%, 0) scale(1.15); }
+}
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgb(255 74 46 / 0.45); }
+  70%  { box-shadow: 0 0 0 14px rgb(255 74 46 / 0); }
+  100% { box-shadow: 0 0 0 0 rgb(255 74 46 / 0); }
+}
+@keyframes grain-shift {
+  0%,100% { transform: translate(0, 0); }
+  10% { transform: translate(-2%, -3%); }
+  30% { transform: translate(3%, -2%); }
+  50% { transform: translate(-1%, 4%); }
+  70% { transform: translate(4%, 1%); }
+  90% { transform: translate(-3%, 2%); }
+}
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+@keyframes sweep {
+  from { transform: translateX(-120%) skewX(-16deg); }
+  to   { transform: translateX(320%) skewX(-16deg); }
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    background-color: var(--color-ink-950);
+    color-scheme: dark;
+    scroll-behavior: smooth;
+    /* Reserve the scrollbar so page transitions never shift layout. */
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    background-color: var(--color-ink-950);
+    color: var(--color-cream);
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv11', 'ss01';
+    font-variant-ligatures: contextual;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+  }
+
+  /* Optical corrections: display serif wants tighter tracking at size. */
+  h1, h2, h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+
+  ::selection {
+    background-color: var(--color-flare);
+    color: #fff;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-flare);
+    outline-offset: 3px;
+    border-radius: 3px;
+  }
+  /* Only show focus rings for keyboard users. */
+  :focus:not(:focus-visible) { outline: none; }
+
+  ::-webkit-scrollbar { width: 11px; height: 11px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-ink-600);
+    border-radius: 99px;
+    border: 3px solid var(--color-ink-950);
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--color-ink-500); }
+
+  input, textarea, select, button { font: inherit; color: inherit; }
+
+  /* Kill the ugly UA autofill wash. */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--color-cream);
+    -webkit-box-shadow: 0 0 0 1000px var(--color-ink-800) inset;
+    transition: background-color 9999s ease-in-out 0s;
+  }
+}
+
+/* ==========================================================================
+   Utilities
+   ========================================================================== */
+
+@layer utilities {
+  .font-display { font-family: var(--font-display); }
+  .font-mono { font-family: var(--font-mono); }
+
+  /* Editorial headline: serif, tight, with optical size cranked up. */
+  .display {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: -0.025em;
+    line-height: 0.95;
+  }
+
+  /* Small-caps eyebrow used across section headers. */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+
+  .tnum { font-variant-numeric: tabular-nums; }
+
+  .edge-fade-x {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 3%, #000 97%, transparent);
+    mask-image: linear-gradient(to right, transparent, #000 3%, #000 97%, transparent);
+  }
+  .edge-fade-r {
+    -webkit-mask-image: linear-gradient(to right, #000 82%, transparent);
+    mask-image: linear-gradient(to right, #000 82%, transparent);
+  }
+
+  .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+
+  .clamp-1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+  .clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+  /* Hairline that reads as 1px on every DPR. */
+  .hairline-t { box-shadow: inset 0 1px 0 0 var(--color-line); }
+  .hairline-b { box-shadow: inset 0 -1px 0 0 var(--color-line); }
+
+  /* Frosted chrome used by the header, command bar and player controls. */
+  .chrome {
+    background-color: rgb(10 10 13 / 0.72);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+  }
+
+  /* 35mm film grain — the single thing that stops flat dark UI reading as plastic. */
+  .grain::after {
+    content: '';
+    position: fixed;
+    inset: -50%;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0.028;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)'/%3E%3C/svg%3E");
+    animation: grain-shift 8s steps(6) infinite;
+    will-change: transform;
+  }
+
+  .sweep-sheen {
+    position: relative;
+    overflow: hidden;
+  }
+  .sweep-sheen::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 35%;
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.09), transparent);
+    transform: translateX(-120%) skewX(-16deg);
+    pointer-events: none;
+  }
+  .sweep-sheen:hover::before { animation: sweep 0.9s var(--ease-out-quint); }
+
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background-color: var(--color-ink-800);
+  }
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgb(244 241 234 / 0.05), transparent);
+    animation: var(--animate-shimmer);
+  }
+
+  .marquee-track {
+    animation: marquee 40s linear infinite;
+  }
+  .marquee-track:hover { animation-play-state: paused; }
+
+  /* Content gutters — one source of truth so every page lines up. */
+  .gutter { padding-inline: clamp(1rem, 4vw, 3.5rem); }
+  .gutter-wide { padding-inline: clamp(1rem, 3vw, 5rem); }
+}
+
+/* ==========================================================================
+   Custom range input — the scrubber and volume slider
+   ========================================================================== */
+
+.range-flare {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.range-flare::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 99px;
+  background: rgb(244 241 234 / 0.22);
+}
+.range-flare::-moz-range-track {
+  height: 3px;
+  border-radius: 99px;
+  background: rgb(244 241 234 / 0.22);
+}
+.range-flare::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 11px;
+  width: 11px;
+  margin-top: -4px;
+  border-radius: 99px;
+  background: var(--color-flare);
+  box-shadow: 0 0 0 4px rgb(255 74 46 / 0.18);
+  transition: transform 0.16s var(--ease-spring);
+}
+.range-flare::-moz-range-thumb {
+  height: 11px;
+  width: 11px;
+  border: 0;
+  border-radius: 99px;
+  background: var(--color-flare);
+}
+.range-flare:hover::-webkit-slider-thumb { transform: scale(1.25); }
+
+/* ==========================================================================
+   Reduced motion — honour it properly, don't just blanket-kill animation
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .grain::after { animation: none; }
+}

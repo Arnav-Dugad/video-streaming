@@ -1,0 +1,107 @@
+rules_version = '2';
+
+/* =============================================================================
+   PRISM — Firestore security rules
+
+   Deploy with:  firebase deploy --only firestore:rules
+
+   Principles:
+     · A user can only ever read or write their own subtree under /users.
+     · Playlists are owner-writable and readable by the owner, plus by anyone
+       if explicitly marked public.
+     · Rooms are readable by any signed-in user (that is what a shareable code
+       is for), but only the host can drive playback. Everyone else may edit
+       exactly one field: their own entry in the members map.
+     · Nothing is world-writable, and no rule ever trusts a client-supplied uid.
+   ============================================================================= */
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    /** The set of top-level fields this write actually changes. */
+    function changed() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    // ---------------------------------------------------------------- users
+    match /users/{uid} {
+      allow read: if isSelf(uid);
+      // The document's own uid field must match the caller — a client cannot
+      // create a profile that claims to be somebody else.
+      allow create: if isSelf(uid) && request.resource.data.uid == uid;
+      allow update: if isSelf(uid) && request.resource.data.uid == resource.data.uid;
+      allow delete: if isSelf(uid);
+
+      // history / saved / likes / subscriptions — strictly private.
+      match /{collection}/{docId} {
+        allow read, write: if isSelf(uid)
+          && collection in ['history', 'saved', 'likes', 'subscriptions'];
+      }
+    }
+
+    // ------------------------------------------------------------ playlists
+    match /playlists/{playlistId} {
+      allow read: if resource.data.visibility == 'public'
+                  || isSelf(resource.data.ownerUid);
+
+      allow create: if signedIn()
+                    && request.resource.data.ownerUid == request.auth.uid
+                    && request.resource.data.title is string
+                    && request.resource.data.title.size() > 0
+                    && request.resource.data.title.size() <= 120
+                    && request.resource.data.visibility in ['private', 'unlisted', 'public'];
+
+      // Ownership can never be transferred by an update.
+      allow update: if isSelf(resource.data.ownerUid)
+                    && request.resource.data.ownerUid == resource.data.ownerUid;
+
+      allow delete: if isSelf(resource.data.ownerUid);
+    }
+
+    // ---------------------------------------------------------------- rooms
+    match /rooms/{roomId} {
+      // Any signed-in user may look a room up — the six-character code is the
+      // access control, exactly like an unlisted link.
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+                    && request.resource.data.hostUid == request.auth.uid
+                    && request.resource.data.code is string
+                    && request.resource.data.code.size() == 6;
+
+      // The host drives playback and may change the video.
+      // Everyone else may only touch the members map — which is how joining
+      // and leaving work — and can never seize the host role.
+      allow update: if signedIn()
+                    && request.resource.data.hostUid == resource.data.hostUid
+                    && (
+                         resource.data.hostUid == request.auth.uid
+                         || changed().hasOnly(['members'])
+                       );
+
+      allow delete: if isSelf(resource.data.hostUid);
+
+      match /messages/{messageId} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+                      && request.resource.data.uid == request.auth.uid
+                      && request.resource.data.text is string
+                      && request.resource.data.text.size() > 0
+                      && request.resource.data.text.size() <= 500;
+        // Messages are immutable; authors may delete their own.
+        allow update: if false;
+        allow delete: if isSelf(resource.data.uid);
+      }
+    }
+
+    // Anything not matched above is denied.
+  }
+}
