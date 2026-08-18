@@ -12,6 +12,7 @@ import { PageShell } from '@/components/layout/PageShell';
 import { PlayerHost } from '@/components/player/PlayerHost';
 import { Cursor } from '@/components/ui/Cursor';
 import { Toaster } from '@/components/ui/Toaster';
+import { SITE_URL } from '@/lib/site';
 
 const geist = Geist({ subsets: ['latin'], variable: '--font-geist', display: 'swap' });
 const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono', display: 'swap' });
@@ -22,10 +23,8 @@ const instrument = Instrument_Serif({
   display: 'swap',
 });
 
-const SITE = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://prism-stream.vercel.app';
-
 export const metadata: Metadata = {
-  metadataBase: new URL(SITE),
+  metadataBase: new URL(SITE_URL),
   title: {
     default: 'PRISM — Everything worth watching',
     template: '%s · PRISM',
@@ -41,7 +40,7 @@ export const metadata: Metadata = {
     title: 'PRISM — Everything worth watching',
     description:
       'Continuous playback that follows you across the app, synced watch parties, and a library that remembers exactly where you stopped.',
-    url: SITE,
+    url: SITE_URL,
   },
   twitter: {
     card: 'summary_large_image',
