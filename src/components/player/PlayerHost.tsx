@@ -58,7 +58,7 @@ export function PlayerHost() {
   const router = useRouter();
   const pathname = usePathname();
   const mobile = useIsMobile();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
 
   const video = usePlayer((s) => s.video);
   const slot = usePlayer((s) => s.slot);
@@ -77,6 +77,17 @@ export function PlayerHost() {
   // which is what an effect-based reset was doing before.
   const [apiError, setApiError] = useState<{ videoId: string; message: string } | null>(null);
   const [dockHover, setDockHover] = useState(false);
+
+  // Saved preferences only exist once the profile has loaded, which is after
+  // the store has already been initialised with its defaults.
+  useEffect(() => {
+    if (!profile) return;
+    const s = usePlayer.getState();
+    s.setAmbient(profile.preferences.ambientGlow);
+    if (profile.preferences.defaultQuality) {
+      s.setQuality(profile.preferences.defaultQuality, s.actualQuality);
+    }
+  }, [profile]);
 
   /* --------------------------- positioning ------------------------------ */
 

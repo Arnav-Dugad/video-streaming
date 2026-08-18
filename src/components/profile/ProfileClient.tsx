@@ -13,7 +13,13 @@ import { Avatar } from '@/components/ui/Avatar';
 import { formatDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { toast, useUI, usePlayer } from '@/lib/store';
+import { qualityLabel } from '@/lib/player-modules';
 import type { UserProfile } from '@/lib/types';
+
+/** Offered up front rather than read from the player, since this page is not
+ *  necessarily showing one. The player's own menu lists exactly what the
+ *  current video publishes. */
+const QUALITY_CHOICES = ['auto', 'hd2160', 'hd1440', 'hd1080', 'hd720', 'large', 'medium', 'small'];
 
 const INTERESTS = [
   'Music', 'Technology', 'Science', 'Film', 'Gaming', 'Cooking', 'Design',
@@ -66,6 +72,7 @@ function ProfileForm({ profile, uid }: { profile: UserProfile; uid: string }) {
   const router = useRouter();
   const toggleShortcuts = useUI((s) => s.toggleShortcuts);
   const setAmbient = usePlayer((s) => s.setAmbient);
+  const setPlayerQuality = usePlayer((s) => s.setQuality);
 
   const [name, setName] = useState(profile.displayName);
   const [bio, setBio] = useState(profile.bio ?? '');
@@ -186,6 +193,40 @@ function ProfileForm({ profile, uid }: { profile: UserProfile; uid: string }) {
                 value={profile.preferences.reduceMotion}
                 onChange={(v) => setPreference('reduceMotion', v)}
               />
+
+              <div className="py-4">
+                <p className="text-[13.5px] text-cream">Preferred quality</p>
+                <p className="mt-1 max-w-md text-[12px] leading-relaxed text-muted">
+                  Applied to every video as it starts. YouTube&apos;s adaptive
+                  streaming can still override it when bandwidth or window size
+                  demand — the player says so when that happens.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {QUALITY_CHOICES.map((q) => {
+                    const on = profile.preferences.defaultQuality === q;
+                    return (
+                      <button
+                        key={q}
+                        onClick={() => {
+                          setPreference('defaultQuality', q);
+                          // Take effect on the currently playing video too,
+                          // rather than only on the next one.
+                          setPlayerQuality(q, q);
+                        }}
+                        aria-pressed={on}
+                        className={cn(
+                          'rounded-lg border px-3 py-1.5 font-mono text-[11.5px] transition-[background-color,border-color,color] duration-250',
+                          on
+                            ? 'border-flare/45 bg-flare/12 text-flare'
+                            : 'border-line text-cream-dim hover:border-line-strong hover:text-cream',
+                        )}
+                      >
+                        {qualityLabel(q)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
 
             <button

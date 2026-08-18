@@ -4,13 +4,18 @@ import Link from 'next/link';
 import { motion } from 'motion/react';
 import { ArrowRight } from 'lucide-react';
 
-import { COLLECTIONS } from '@/lib/collections';
+import type { Collection } from '@/lib/collections';
 import { Tilt } from '@/components/ui/Magnetic';
 import { Reveal } from '@/components/ui/Reveal';
 import { cn } from '@/lib/cn';
 
-export function CollectionCards({ limit = 4, showHeader = true }: { limit?: number; showHeader?: boolean }) {
-  const items = COLLECTIONS.slice(0, limit);
+/** Collections are discovered per request now, so they arrive as a prop
+ *  rather than being imported from a constant. */
+export function CollectionCards({
+  collections, limit, showHeader = true,
+}: { collections: Collection[]; limit?: number; showHeader?: boolean }) {
+  const items = limit ? collections.slice(0, limit) : collections;
+  if (items.length === 0) return null;
 
   return (
     <section className="gutter-wide py-10 sm:py-16">
@@ -67,7 +72,9 @@ export function CollectionCards({ limit = 4, showHeader = true }: { limit?: numb
                 />
 
                 <div>
-                  <p className="eyebrow">{c.curator}</p>
+                  <p className="eyebrow">
+                    {c.kind === 'topic' ? 'Trending topic' : 'Standing rule'}
+                  </p>
                   <h3 className="display mt-3 text-[1.6rem] leading-[1.05] text-cream">{c.title}</h3>
                 </div>
 

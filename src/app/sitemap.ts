@@ -1,5 +1,5 @@
 import type { MetadataRoute } from 'next';
-import { COLLECTIONS } from '@/lib/collections';
+import { STRUCTURAL } from '@/lib/collections';
 import { STATIC_CATEGORIES } from '@/lib/youtube';
 import { SITE_URL } from '@/lib/site';
 
@@ -14,7 +14,10 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: `${SITE_URL}/rooms`, lastModified: now, changeFrequency: 'daily', priority: 0.6 },
   ];
 
-  const collections = COLLECTIONS.map((c) => ({
+  // Only the structural collections go in the sitemap. Topic slugs are
+  // regenerated hourly from live data, so advertising them would publish URLs
+  // that stop existing as soon as the subject cools off.
+  const collections = STRUCTURAL.map((c) => ({
     url: `${SITE_URL}/collections/${c.slug}`,
     lastModified: now,
     changeFrequency: 'daily' as const,

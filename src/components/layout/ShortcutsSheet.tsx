@@ -28,6 +28,7 @@ const GROUPS = [
       ['C', 'Captions'],
       ['F', 'Fullscreen'],
       ['T', 'Theatre mode'],
+      ['I', 'Mini player'],
       ['⇧ N', 'Play next in queue'],
       ['⇧ , / ⇧ .', 'Slower / faster'],
     ],

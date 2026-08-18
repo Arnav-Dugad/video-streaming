@@ -28,9 +28,19 @@ export interface YTPlayer {
   getPlaybackRate(): number;
   setPlaybackRate(rate: number): void;
   getAvailablePlaybackRates(): number[];
+  /** e.g. ['hd1080','hd720','large','medium','small','tiny','auto'] */
+  getAvailableQualityLevels(): string[];
+  getPlaybackQuality(): string;
+  /** Deprecated by YouTube — see `applyQuality` in lib/player-quality.ts. */
+  setPlaybackQuality(quality: string): void;
+  /** Undocumented but still honoured more often than setPlaybackQuality. */
+  setPlaybackQualityRange?(min: string, max: string): void;
+  loadModule(module: string): void;
+  unloadModule(module: string): void;
   loadVideoById(opts: { videoId: string; startSeconds?: number }): void;
   cueVideoById(opts: { videoId: string; startSeconds?: number }): void;
   setOption(module: string, option: string, value: unknown): void;
+  getOption(module: string, option: string): unknown;
   getOptions(module?: string): unknown;
   destroy(): void;
   getIframe(): HTMLIFrameElement;

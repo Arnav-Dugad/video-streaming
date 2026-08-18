@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import type { Video } from './types';
+import type { CaptionTrack } from './player-modules';
 
 /* ==========================================================================
    Player store.
@@ -37,7 +38,14 @@ interface PlayerState {
   queue: Video[];
   ambient: boolean;
   playbackRate: number;
-  captions: boolean;
+  /** The viewer's preferred quality id, or 'auto'. YouTube may override it —
+   *  `actualQuality` is what the player reported back. */
+  quality: string;
+  actualQuality: string;
+  availableQualities: string[];
+  /** Active caption language code, or null when captions are off. */
+  captionTrack: string | null;
+  captionTracks: CaptionTrack[];
 
   load(video: Video, opts?: { startAt?: number; queue?: Video[] }): void;
   setSlot(rect: Rect | null): void;
@@ -53,7 +61,10 @@ interface PlayerState {
   playNext(): Video | null;
   setAmbient(on: boolean): void;
   setPlaybackRate(rate: number): void;
-  setCaptions(on: boolean): void;
+  setQuality(quality: string, actual?: string): void;
+  setAvailableQualities(levels: string[]): void;
+  setCaptionTrack(code: string | null): void;
+  setCaptionTracks(tracks: CaptionTrack[]): void;
   close(): void;
 }
 
@@ -72,7 +83,11 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   queue: [],
   ambient: true,
   playbackRate: 1,
-  captions: false,
+  quality: 'auto',
+  actualQuality: 'auto',
+  availableQualities: [],
+  captionTrack: null,
+  captionTracks: [],
 
   load: (video, opts) =>
     set((s) => ({
@@ -85,6 +100,12 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       ready: false,
       playing: true,
       mode: s.slot ? 'inline' : 'docked',
+      // Renditions and caption tracks are per-video; carrying them over would
+      // leave the settings menu describing the previous one.
+      availableQualities: [],
+      actualQuality: 'auto',
+      captionTracks: [],
+      captionTrack: null,
     })),
 
   setSlot: (slot) =>
@@ -123,13 +144,20 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       ready: false,
       playing: true,
       pendingSeek: null,
+      availableQualities: [],
+      actualQuality: 'auto',
+      captionTracks: [],
+      captionTrack: null,
     });
     return next;
   },
 
   setAmbient: (ambient) => set({ ambient }),
   setPlaybackRate: (playbackRate) => set({ playbackRate }),
-  setCaptions: (captions) => set({ captions }),
+  setQuality: (quality, actual) => set({ quality, actualQuality: actual ?? quality }),
+  setAvailableQualities: (availableQualities) => set({ availableQualities }),
+  setCaptionTrack: (captionTrack) => set({ captionTrack }),
+  setCaptionTracks: (captionTracks) => set({ captionTracks }),
 
   close: () =>
     set({

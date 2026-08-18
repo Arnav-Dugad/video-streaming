@@ -4,8 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  Captions, Gauge, Maximize, Minimize, Pause, PictureInPicture2, Play,
-  RotateCcw, RotateCw, SkipForward, Sparkles, Tv2, Volume1, Volume2, VolumeX,
+  Captions, Check, ChevronLeft, ChevronRight, Maximize, Minimize, Minimize2,
+  Pause, Play, RotateCcw, RotateCw, Settings, SkipForward, Sparkles, Tv2,
+  Volume1, Volume2, VolumeX,
 } from 'lucide-react';
 
 import { usePlayer } from '@/lib/store';
@@ -14,6 +15,10 @@ import { useKeyboard } from '@/hooks/useKeyboard';
 import { cn } from '@/lib/cn';
 import type { YTPlayer } from '@/hooks/useYouTubeApi';
 import { toast } from '@/lib/store';
+import {
+  activeCaptionTrack, applyQuality, availableQualities, getCaptionTracks,
+  loadCaptionModule, preferredTrack, qualityLabel, setCaptionTrack as applyCaptionTrack,
+} from '@/lib/player-modules';
 
 /* ==========================================================================
    Control bar.
@@ -50,7 +55,12 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
   const ambient = usePlayer((s) => s.ambient);
   const queue = usePlayer((s) => s.queue);
   const rate = usePlayer((s) => s.playbackRate);
-  const captions = usePlayer((s) => s.captions);
+  const ready = usePlayer((s) => s.ready);
+  const quality = usePlayer((s) => s.quality);
+  const actualQuality = usePlayer((s) => s.actualQuality);
+  const qualities = usePlayer((s) => s.availableQualities);
+  const captionTrack = usePlayer((s) => s.captionTrack);
+  const captionTracks = usePlayer((s) => s.captionTracks);
 
   const setPlaying = usePlayer((s) => s.setPlaying);
   const setMuted = usePlayer((s) => s.setMuted);
@@ -58,14 +68,21 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
   const setMode = usePlayer((s) => s.setMode);
   const setAmbient = usePlayer((s) => s.setAmbient);
   const setPlaybackRate = usePlayer((s) => s.setPlaybackRate);
-  const setCaptions = usePlayer((s) => s.setCaptions);
+  const setQuality = usePlayer((s) => s.setQuality);
+  const setAvailableQualities = usePlayer((s) => s.setAvailableQualities);
+  const setCaptionTrackState = usePlayer((s) => s.setCaptionTrack);
+  const setCaptionTracks = usePlayer((s) => s.setCaptionTracks);
   const requestSeek = usePlayer((s) => s.requestSeek);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const [scrubbing, setScrubbing] = useState(false);
   const [hoverPct, setHoverPct] = useState<number | null>(null);
-  const [speedOpen, setSpeedOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [applyingQuality, setApplyingQuality] = useState(false);
+
+  /** null = closed. Otherwise the settings pane currently showing. */
+  const [panel, setPanel] = useState<null | 'root' | 'quality' | 'speed' | 'captions'>(null);
+  const menuOpen = panel !== null;
 
   /* Visibility is derived, not stored. `activity` ticks on every interaction;
      the idle timer records the tick it fired at. They differ exactly when
@@ -84,13 +101,13 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
   const sleep = useCallback(() => setIdleAt(activity), [activity]);
 
   // Controls stay up while paused, while scrubbing, and while a menu is open.
-  const visible = !playing || scrubbing || speedOpen || idleAt !== activity;
+  const visible = !playing || scrubbing || menuOpen || idleAt !== activity;
 
   useEffect(() => {
-    if (!playing || scrubbing || speedOpen) return;
+    if (!playing || scrubbing || menuOpen) return;
     const t = setTimeout(() => setIdleAt(activity), HIDE_DELAY);
     return () => clearTimeout(t);
-  }, [playing, scrubbing, speedOpen, activity]);
+  }, [playing, scrubbing, menuOpen, activity]);
 
   /* ---------------------------- transport ------------------------------- */
 
@@ -135,7 +152,7 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
   const changeRate = useCallback((r: number) => {
     api()?.setPlaybackRate(r);
     setPlaybackRate(r);
-    setSpeedOpen(false);
+    setPanel(null);
   }, [api, setPlaybackRate]);
 
   const stepRate = useCallback((dir: 1 | -1) => {
@@ -144,16 +161,89 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
     changeRate(next);
   }, [rate, changeRate]);
 
+  /* ------------------------ captions & quality -------------------------- */
+
+  /** The player only knows its renditions and caption tracks once playback has
+   *  actually begun, so these are read on ready and refreshed whenever the
+   *  menu opens — which is the moment the answer needs to be current. */
+  const refreshModules = useCallback(() => {
+    const p = api();
+    if (!p) return;
+    setAvailableQualities(availableQualities(p));
+    const tracks = getCaptionTracks(p);
+    setCaptionTracks(tracks);
+    setCaptionTrackState(activeCaptionTrack(p));
+  }, [api, setAvailableQualities, setCaptionTracks, setCaptionTrackState]);
+
+  const appliedQualityFor = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!ready) return;
+    const p = api();
+    if (!p) return;
+    loadCaptionModule(p);
+
+    // Renditions are not published the instant onReady fires.
+    const t = setTimeout(() => {
+      refreshModules();
+      // Re-assert the viewer's saved quality on each new video — the player
+      // resets to adaptive on every load, so a preference set once would
+      // otherwise apply to exactly one video.
+      const preferred = usePlayer.getState().quality;
+      if (preferred !== 'auto' && video && appliedQualityFor.current !== video.id) {
+        appliedQualityFor.current = video.id;
+        applyQuality(p, preferred).then(({ actual }) => setQuality(preferred, actual));
+      }
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [ready, video, api, refreshModules, setQuality]);
+
+  const chooseCaptionTrack = useCallback((code: string | null) => {
+    const p = api();
+    if (!p) return;
+    if (!applyCaptionTrack(p, code)) {
+      toast('Captions are not available for this video');
+      return;
+    }
+    setCaptionTrackState(code);
+    setPanel(null);
+  }, [api, setCaptionTrackState]);
+
+  /** The `C` shortcut and the CC button: flip between off and the best track. */
   const toggleCaptions = useCallback(() => {
     const p = api();
-    try {
-      if (captions) p?.setOption('captions', 'track', {});
-      else p?.setOption('captions', 'track', { languageCode: 'en' });
-      setCaptions(!captions);
-    } catch {
-      toast('Captions are not available for this video');
+    if (!p) return;
+    if (captionTrack) { chooseCaptionTrack(null); return; }
+
+    const tracks = captionTracks.length > 0 ? captionTracks : getCaptionTracks(p);
+    if (tracks.length === 0) {
+      toast('This video has no captions');
+      return;
     }
-  }, [api, captions, setCaptions]);
+    if (tracks !== captionTracks) setCaptionTracks(tracks);
+    const best = preferredTrack(tracks);
+    if (best) chooseCaptionTrack(best.languageCode);
+  }, [api, captionTrack, captionTracks, chooseCaptionTrack, setCaptionTracks]);
+
+  const chooseQuality = useCallback(async (q: string) => {
+    const p = api();
+    if (!p) return;
+    setApplyingQuality(true);
+    setQuality(q, q);
+    setPanel(null);
+    const { outcome, actual } = await applyQuality(p, q);
+    setApplyingQuality(false);
+    setQuality(q, actual);
+    if (outcome === 'overridden') {
+      // Saying nothing here would leave a checkmark next to a setting that did
+      // not take, which is worse than the limitation itself.
+      toast(
+        `YouTube kept this at ${qualityLabel(actual)} — its adaptive streaming overrides fixed quality when bandwidth or window size demand it.`,
+      );
+    } else if (outcome === 'unsupported') {
+      toast('This player build does not expose quality selection');
+    }
+  }, [api, setQuality]);
 
   const surface = useCallback(() => rootRef.current?.parentElement ?? null, []);
 
@@ -174,12 +264,14 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
     return () => document.removeEventListener('fullscreenchange', onChange);
   }, []);
 
-  const togglePip = useCallback(async () => {
-    // The YouTube iframe can't be handed to the Picture-in-Picture API — it is
-    // cross-origin and owns its own <video>. Route to the browser's own control
-    // instead of pretending to support it.
-    toast('Use your browser\'s picture-in-picture control for the embedded player', { tone: 'neutral' });
-  }, []);
+  /* The browser Picture-in-Picture API cannot take this player: the embed is
+     cross-origin, so its <video> element is unreachable, and moving the iframe
+     into a Document PiP window destroys and reloads its browsing context.
+     Docking is the equivalent that genuinely works — the same iframe keeps
+     playing, uninterrupted, in a corner. */
+  const dock = useCallback(() => {
+    setMode(mode === 'docked' ? 'inline' : 'docked');
+  }, [mode, setMode]);
 
   const skipNext = useCallback(() => {
     const next = usePlayer.getState().playNext();
@@ -202,6 +294,7 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
       { key: 'f', run: toggleFullscreen },
       { key: 't', run: () => setMode(mode === 'theatre' ? 'inline' : 'theatre') },
       { key: 'c', run: toggleCaptions },
+      { key: 'i', run: dock },
       { key: 'n', shift: true, run: skipNext },
       { key: ',', shift: true, run: () => stepRate(-1) },
       { key: '.', shift: true, run: () => stepRate(1) },
@@ -340,47 +433,129 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
 
           <div className="ml-auto flex items-center gap-0.5 sm:gap-1">
             <div className="relative">
-              <Ctl label="Playback speed" onClick={() => setSpeedOpen((v) => !v)} active={rate !== 1}>
-                <Gauge className="h-4 w-4" />
+              <Ctl
+                label="Settings"
+                onClick={() => { setPanel((cur) => (cur === null ? 'root' : null)); refreshModules(); }}
+                active={menuOpen || quality !== 'auto' || rate !== 1}
+              >
+                <Settings className={cn('h-4 w-4 transition-transform duration-500', menuOpen && 'rotate-45')} />
               </Ctl>
+
               <AnimatePresence>
-                {speedOpen && (
+                {menuOpen && (
                   <>
-                    <div className="fixed inset-0 z-10" onClick={() => setSpeedOpen(false)} />
+                    <div className="fixed inset-0 z-10" onClick={() => setPanel(null)} />
                     <motion.div
                       initial={{ opacity: 0, y: 8, scale: 0.96 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: 8, scale: 0.96 }}
                       transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                      className="absolute bottom-11 right-0 z-20 w-28 rounded-xl border border-line-strong chrome p-1 shadow-float"
+                      className="absolute bottom-11 right-0 z-20 w-60 overflow-hidden rounded-xl border border-line-strong chrome shadow-float"
+                      role="menu"
                     >
-                      {SPEEDS.map((s) => (
-                        <button
-                          key={s}
-                          onClick={() => changeRate(s)}
-                          className={cn(
-                            'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left font-mono text-[11.5px] transition-colors',
-                            s === rate ? 'bg-flare/15 text-flare' : 'text-cream-dim hover:bg-cream/[0.07] hover:text-cream',
+                      {panel === 'root' && (
+                        <div className="p-1">
+                          <MenuRow
+                            label="Quality"
+                            value={quality === 'auto'
+                              ? `Auto${actualQuality !== 'auto' ? ` (${qualityLabel(actualQuality)})` : ''}`
+                              : qualityLabel(quality)}
+                            onClick={() => setPanel('quality')}
+                          />
+                          <MenuRow
+                            label="Speed"
+                            value={rate === 1 ? 'Normal' : `${rate}\u00d7`}
+                            onClick={() => setPanel('speed')}
+                          />
+                          <MenuRow
+                            label="Subtitles"
+                            value={captionTrack
+                              ? (captionTracks.find((t) => t.languageCode === captionTrack)?.languageName ?? captionTrack)
+                              : 'Off'}
+                            onClick={() => setPanel('captions')}
+                          />
+                        </div>
+                      )}
+
+                      {panel === 'quality' && (
+                        <SubPanel title="Quality" onBack={() => setPanel('root')}>
+                          <MenuOption
+                            label="Auto"
+                            hint={actualQuality !== 'auto' ? qualityLabel(actualQuality) : undefined}
+                            selected={quality === 'auto'}
+                            onClick={() => chooseQuality('auto')}
+                          />
+                          {qualities.map((q) => (
+                            <MenuOption
+                              key={q}
+                              label={qualityLabel(q)}
+                              selected={quality === q}
+                              onClick={() => chooseQuality(q)}
+                            />
+                          ))}
+                          {qualities.length === 0 && (
+                            <p className="px-3 py-3 text-[11.5px] leading-relaxed text-faint">
+                              {applyingQuality ? 'Switching\u2026' : 'Renditions appear once playback has started.'}
+                            </p>
                           )}
-                        >
-                          {s === 1 ? 'Normal' : `${s}×`}
-                          {s === rate && <span className="h-1.5 w-1.5 rounded-full bg-flare" />}
-                        </button>
-                      ))}
+                          <p className="border-t border-line px-3 py-2 text-[10.5px] leading-relaxed text-faint">
+                            YouTube&apos;s adaptive streaming can override a fixed
+                            choice when bandwidth or window size demand it.
+                          </p>
+                        </SubPanel>
+                      )}
+
+                      {panel === 'speed' && (
+                        <SubPanel title="Speed" onBack={() => setPanel('root')}>
+                          {SPEEDS.map((sp) => (
+                            <MenuOption
+                              key={sp}
+                              label={sp === 1 ? 'Normal' : `${sp}\u00d7`}
+                              selected={sp === rate}
+                              onClick={() => changeRate(sp)}
+                            />
+                          ))}
+                        </SubPanel>
+                      )}
+
+                      {panel === 'captions' && (
+                        <SubPanel title="Subtitles" onBack={() => setPanel('root')}>
+                          <MenuOption label="Off" selected={!captionTrack} onClick={() => chooseCaptionTrack(null)} />
+                          {captionTracks.map((t) => (
+                            <MenuOption
+                              key={`${t.languageCode}-${t.isAuto}`}
+                              label={t.languageName}
+                              hint={t.isAuto ? 'auto-generated' : undefined}
+                              selected={captionTrack === t.languageCode}
+                              onClick={() => chooseCaptionTrack(t.languageCode)}
+                            />
+                          ))}
+                          {captionTracks.length === 0 && (
+                            <p className="px-3 py-3 text-[11.5px] leading-relaxed text-faint">
+                              No subtitle tracks published for this video.
+                            </p>
+                          )}
+                        </SubPanel>
+                      )}
                     </motion.div>
                   </>
                 )}
               </AnimatePresence>
             </div>
 
-            <Ctl label="Captions (c)" onClick={toggleCaptions} active={captions} className="hidden sm:grid">
+            <Ctl
+              label={captionTrack ? 'Turn subtitles off (c)' : 'Subtitles (c)'}
+              onClick={toggleCaptions}
+              active={Boolean(captionTrack)}
+              className="hidden sm:grid"
+            >
               <Captions className="h-4 w-4" />
             </Ctl>
             <Ctl label="Ambient glow" onClick={() => setAmbient(!ambient)} active={ambient} className="hidden md:grid">
               <Sparkles className="h-4 w-4" />
             </Ctl>
-            <Ctl label="Picture in picture" onClick={togglePip} className="hidden md:grid">
-              <PictureInPicture2 className="h-4 w-4" />
+            <Ctl label="Mini player (i)" onClick={dock} active={mode === 'docked'} className="hidden md:grid">
+              <Minimize2 className="h-4 w-4" />
             </Ctl>
             <Ctl
               label="Theatre mode (t)"
@@ -583,6 +758,59 @@ function VolumeControl({
         />
       </div>
     </div>
+  );
+}
+
+function MenuRow({ label, value, onClick }: { label: string; value: string; onClick(): void }) {
+  return (
+    <button
+      role="menuitem"
+      onClick={onClick}
+      className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-cream/[0.07]"
+    >
+      <span className="text-[13px] text-cream">{label}</span>
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="truncate text-[12px] text-muted">{value}</span>
+        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-faint" />
+      </span>
+    </button>
+  );
+}
+
+function SubPanel({
+  title, onBack, children,
+}: { title: string; onBack(): void; children: React.ReactNode }) {
+  return (
+    <div>
+      <button
+        onClick={onBack}
+        className="flex w-full items-center gap-1.5 border-b border-line px-2.5 py-2.5 text-left transition-colors hover:bg-cream/[0.05]"
+      >
+        <ChevronLeft className="h-3.5 w-3.5 text-muted" />
+        <span className="text-[12.5px] font-medium text-cream">{title}</span>
+      </button>
+      <div className="max-h-60 overflow-y-auto p-1">{children}</div>
+    </div>
+  );
+}
+
+function MenuOption({
+  label, hint, selected, onClick,
+}: { label: string; hint?: string; selected: boolean; onClick(): void }) {
+  return (
+    <button
+      role="menuitemradio"
+      aria-checked={selected}
+      onClick={onClick}
+      className={cn(
+        'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors',
+        selected ? 'text-flare' : 'text-cream-dim hover:bg-cream/[0.07] hover:text-cream',
+      )}
+    >
+      <Check className={cn('h-3.5 w-3.5 shrink-0', !selected && 'opacity-0')} />
+      <span className="truncate text-[12.5px]">{label}</span>
+      {hint && <span className="ml-auto shrink-0 font-mono text-[10px] text-faint">{hint}</span>}
+    </button>
   );
 }
 

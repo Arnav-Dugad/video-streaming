@@ -1,101 +1,135 @@
-/** Editorially curated runs. Each one is a saved query with a point of view —
- *  the thing an algorithmic feed cannot give you. Rendered on /collections and
- *  seeded into the home page. */
+/* ==========================================================================
+   Collections — shapes and rules only.
+
+   Nothing here reaches the network, so client components can import it. The
+   generator that actually assembles the live set is `collections.server.ts`.
+
+   A collection is not a hardcoded list of videos. It is a *rule* plus a
+   presentation. Two kinds exist:
+
+     · structural — a rule over the catalogue that is always true
+                    ("nothing under twenty minutes"), with a stable slug
+     · topic      — a subject that is demonstrably busy right now, discovered
+                    by counting tags across the live trending chart
+
+   Because both are rules rather than stored lists, a collection page can be
+   resolved from its slug alone with no shared state between requests.
+   ========================================================================== */
+
+export type CollectionKind = 'structural' | 'topic';
 
 export interface Collection {
   slug: string;
+  kind: CollectionKind;
   title: string;
-  /** Shown on the card. One sentence, no marketing voice. */
+  /** One factual line for the card. Never marketing copy. */
   blurb: string;
-  /** Long-form intro on the collection page. */
+  /** Longer framing on the collection's own page. */
   intro: string;
-  query: string;
-  /** Hue used for the card's wash. Kept in the 8–52° / 200–260° ranges so the
-   *  set stays within the brand's warm/cool split. */
+  /** Hue for the card wash, kept in the brand's warm/cool split. */
   hue: number;
-  curator: string;
-  duration?: 'any' | 'short' | 'medium' | 'long';
-  order?: 'relevance' | 'viewCount' | 'date';
+  /** How the page fetches it. */
+  rule: CollectionRule;
+  /** Populated by the generator for topic collections. */
+  meta?: { count: number; leadChannel?: string };
 }
 
-export const COLLECTIONS: Collection[] = [
+export interface CollectionRule {
+  query?: string;
+  duration?: 'any' | 'short' | 'medium' | 'long';
+  order?: 'relevance' | 'viewCount' | 'date';
+  /** Restrict to uploads within this many hours. */
+  withinHours?: number;
+  /** Pull from the trending chart rather than search. */
+  fromTrending?: boolean;
+  categoryId?: string;
+}
+
+/* --------------------------- structural set ----------------------------- */
+
+/** Always present, always meaningful, and independent of what is trending. */
+export const STRUCTURAL: Collection[] = [
   {
-    slug: 'the-long-read',
-    title: 'The Long Read',
-    blurb: 'Hour-plus documentaries and lectures for a Sunday that has nowhere to be.',
+    slug: 'the-long-haul',
+    kind: 'structural',
+    title: 'The Long Haul',
+    blurb: 'Nothing in here runs under twenty minutes.',
     intro:
-      'Everything here runs past sixty minutes. These are the videos that reward a real sitting — a single argument developed properly, or a subject taken apart with the patience the internet usually refuses.',
-    query: 'documentary lecture full length',
-    hue: 24, curator: 'PRISM Editorial', duration: 'long',
-  },
-  {
-    slug: 'built-from-scratch',
-    title: 'Built From Scratch',
-    blurb: 'People making the whole thing themselves, from first principle to finished object.',
-    intro:
-      'A compiler. A guitar. A CPU on breadboard. The pleasure of these is watching competence applied end to end, with nothing skipped and no sponsor break where the hard part should be.',
-    query: 'built from scratch how it is made engineering',
-    hue: 38, curator: 'PRISM Editorial',
-  },
-  {
-    slug: 'quiet-hours',
-    title: 'Quiet Hours',
-    blurb: 'Low-stimulus video for late at night. Nothing shouts.',
-    intro:
-      'No jump cuts, no intro stinger, no one asking you to smash anything. Slow footage, ambient sound, and long takes — for when you want the screen on but the volume of the internet turned down.',
-    query: 'ambient relaxing slow tv nature sounds',
-    hue: 218, curator: 'PRISM Editorial', duration: 'long',
-  },
-  {
-    slug: 'first-principles',
-    title: 'First Principles',
-    blurb: 'Explanations that start at the bottom and actually get somewhere.',
-    intro:
-      'The rare videos that refuse to hand-wave. Maths, physics and computing, explained by people who understood it well enough to rebuild the intuition rather than recite the result.',
-    query: 'explained from first principles mathematics physics intuition',
-    hue: 232, curator: 'PRISM Editorial',
-  },
-  {
-    slug: 'the-archive',
-    title: 'The Archive',
-    blurb: 'Footage that has outlived the moment it was shot in.',
-    intro:
-      'Concert films, broadcast fragments, and recordings that only exist because somebody kept a tape. The internet is the largest accidental archive ever assembled; this is a walk through part of it.',
-    query: 'archive footage restored classic performance',
-    hue: 14, curator: 'PRISM Editorial', order: 'relevance',
+      'Everything below is long-form by rule, not by taste. These are the videos that reward an actual sitting — one argument developed properly, or a subject taken apart with the patience the internet usually refuses.',
+    hue: 24,
+    rule: { query: 'documentary lecture deep dive', duration: 'long' },
   },
   {
     slug: 'short-and-perfect',
+    kind: 'structural',
     title: 'Short and Perfect',
-    blurb: 'Under four minutes, not one of them wasted.',
+    blurb: 'Under four minutes, and not one of them wasted.',
     intro:
-      'Compression is a craft. Everything in here says what it came to say and then stops — the animated short, the single sharp demonstration, the joke that lands and leaves.',
-    query: 'short film animation award winning',
-    hue: 46, curator: 'PRISM Editorial', duration: 'short',
+      'Compression is a craft. Everything here says what it came to say and then stops — the animated short, the single sharp demonstration, the joke that lands and leaves.',
+    hue: 46,
+    rule: { query: 'short film animation', duration: 'short' },
   },
   {
-    slug: 'live-performance',
-    title: 'Live, In One Take',
-    blurb: 'Musicians playing it properly, with the mistakes left in.',
+    slug: 'landed-today',
+    kind: 'structural',
+    title: 'Landed Today',
+    blurb: 'Published in the last twenty-four hours.',
     intro:
-      'Tiny Desk sets, live sessions, and full concert recordings. No overdubs to hide behind — just the difference between a record and a room.',
-    query: 'live session full concert performance one take',
-    hue: 8, curator: 'PRISM Editorial', duration: 'medium',
+      'The newest end of the catalogue, before anything has had time to accumulate a view count. Sorted by upload time, so this is genuinely what went up today rather than what an algorithm decided you missed.',
+    hue: 206,
+    rule: { withinHours: 24, order: 'date', query: 'new' },
   },
   {
-    slug: 'how-the-world-works',
-    title: 'How the World Works',
-    blurb: 'Supply chains, infrastructure, and the machinery nobody looks at.',
+    slug: 'most-watched',
+    kind: 'structural',
+    title: 'Most Watched',
+    blurb: 'Ranked by view count. No recency bonus, no personalisation.',
     intro:
-      'Where your water comes from, how a port schedules itself, why a bridge stands up. Systems journalism for the parts of civilisation that only become visible when they fail.',
-    query: 'infrastructure logistics how it works engineering explained',
-    hue: 206, curator: 'PRISM Editorial',
+      'The plainest possible ranking: how many people have actually watched it. No decay curve, no engagement weighting, no guess about what you in particular might want.',
+    hue: 14,
+    rule: { fromTrending: true, order: 'viewCount' },
   },
 ];
 
-export function collectionBySlug(slug: string): Collection | undefined {
-  return COLLECTIONS.find((c) => c.slug === slug);
+/* ------------------------------ slugs ----------------------------------- */
+
+const TOPIC_PREFIX = 'topic-';
+
+export function topicSlug(topic: string): string {
+  return TOPIC_PREFIX + topic.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
+
+export function isTopicSlug(slug: string): boolean {
+  return slug.startsWith(TOPIC_PREFIX) && slug.length > TOPIC_PREFIX.length;
+}
+
+/** Slugs are lossy, so the recovered phrase is a search query, not an exact
+ *  tag. That is fine — it is fed to search either way. */
+export function topicFromSlug(slug: string): string {
+  return slug.slice(TOPIC_PREFIX.length).replace(/-/g, ' ');
+}
+
+export function structuralBySlug(slug: string): Collection | undefined {
+  return STRUCTURAL.find((c) => c.slug === slug);
+}
+
+/** Hue for a topic card, derived from its own name so a given topic keeps the
+ *  same colour between builds. Constrained to the brand's two arcs. */
+export function topicHue(topic: string): number {
+  let h = 0;
+  for (let i = 0; i < topic.length; i++) h = (h * 31 + topic.charCodeAt(i)) % 1000;
+  const warm = h % 2 === 0;
+  return warm ? 8 + (h % 44) : 198 + (h % 52);
+}
+
+export function titleCase(s: string): string {
+  return s
+    .split(/\s+/)
+    .map((w) => (w.length <= 2 && !/^\d/.test(w) ? w.toUpperCase() : w[0]?.toUpperCase() + w.slice(1)))
+    .join(' ');
+}
+
+/* ------------------------------- moods ---------------------------------- */
 
 /** Mood chips on the home page. A deliberately non-algorithmic entry point:
  *  you say how you want to feel, not what you want to watch. */

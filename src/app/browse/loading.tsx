@@ -1,5 +1,10 @@
 import { GridSkeleton } from '@/components/ui/Skeleton';
 
+/* Loading files open a Suspense boundary, which commits the HTTP status before
+   the page body resolves. That is fine here — /browse always renders — but it
+   is why routes that can call notFound() (watch, channel, a collection slug)
+   deliberately have no loading file: a streamed shell would pin them to 200
+   and turn every genuine 404 into a soft one. */
 export default function Loading() {
   return (
     <div className="gutter-wide py-16">

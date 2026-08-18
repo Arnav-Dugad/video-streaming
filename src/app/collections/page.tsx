@@ -1,22 +1,35 @@
 import type { Metadata } from 'next';
-import { COLLECTIONS } from '@/lib/collections';
+
+import { buildCollections } from '@/lib/collections.server';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { CollectionCards } from '@/components/home/CollectionCards';
 
+/** Rebuilt hourly — the topic half of the set is only as current as the
+ *  trending chart it was derived from. */
+export const revalidate = 3600;
+
 export const metadata: Metadata = {
   title: 'Collections',
-  description: 'Hand-built runs through the catalogue — long reads, quiet hours, first principles and more.',
+  description:
+    'Four standing rules over the catalogue, plus whatever subjects the trending chart is currently clustered around.',
 };
 
-export default function CollectionsPage() {
+export default async function CollectionsPage() {
+  const collections = await buildCollections(8);
+  const topics = collections.filter((c) => c.kind === 'topic');
+
   return (
     <>
       <PageHeader
-        eyebrow="Curated"
+        eyebrow="Assembled, not curated"
         title="Collections"
-        lede="Eight standing runs through the catalogue, each one a query with a point of view attached. No ranking signal decided what belongs in them."
+        lede={
+          topics.length > 0
+            ? `Four standing rules over the catalogue, plus ${topics.length} subjects discovered by counting what the trending chart is tagged with. Nobody wrote the second half — it changes when the internet does.`
+            : 'Four standing rules over the catalogue. Topic collections appear here once the trending chart is reachable.'
+        }
       />
-      <CollectionCards limit={COLLECTIONS.length} showHeader={false} />
+      <CollectionCards collections={collections} showHeader={false} />
     </>
   );
 }

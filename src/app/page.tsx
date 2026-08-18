@@ -1,12 +1,14 @@
 import { Suspense } from 'react';
 
 import { getTrending, searchVideos, hasLiveApi } from '@/lib/youtube';
+import { buildCollections } from '@/lib/collections.server';
 import { Hero } from '@/components/home/Hero';
 import { MoodPicker } from '@/components/home/MoodPicker';
 import { CollectionCards } from '@/components/home/CollectionCards';
 import { Manifesto } from '@/components/home/Manifesto';
 import { DemoBanner } from '@/components/home/DemoBanner';
 import { ContinueWatching } from '@/components/home/ContinueWatching';
+import { ForYou } from '@/components/home/ForYou';
 import { Rail, RailItem } from '@/components/video/Rail';
 import { VideoCard } from '@/components/video/VideoCard';
 import { RailSkeleton } from '@/components/ui/Skeleton';
@@ -19,11 +21,12 @@ export const revalidate = 3600;
 export default async function HomePage() {
   // One await for the whole page — these are independent, so serialising them
   // would add a full round trip per rail for no reason.
-  const [trending, music, tech, talks] = await Promise.all([
+  const [trending, music, tech, talks, collections] = await Promise.all([
     getTrending('US', undefined, 24),
     getTrending('US', '10', 14).catch(() => [] as Video[]),
     searchVideos({ q: 'engineering deep dive explained', maxResults: 14 }).then((p) => p.items).catch(() => [] as Video[]),
     searchVideos({ q: 'talk lecture interview long form', maxResults: 14, videoDuration: 'long' }).then((p) => p.items).catch(() => [] as Video[]),
+    buildCollections(4).catch(() => []),
   ]);
 
   const spotlight = trending.slice(0, 5);
@@ -38,6 +41,11 @@ export default async function HomePage() {
       <Suspense fallback={<div className="gutter-wide py-8"><RailSkeleton count={4} /></div>}>
         <ContinueWatching />
       </Suspense>
+
+      {/* Personalised rail. This page is a shared static render, so weighting
+          cannot happen server-side without giving every visitor one person's
+          taste — it runs in the browser against the signed-in profile. */}
+      <ForYou />
 
       {rest.length > 0 && (
         <Rail
@@ -57,7 +65,7 @@ export default async function HomePage() {
 
       <MoodPicker />
 
-      <CollectionCards />
+      <CollectionCards collections={collections} limit={4} />
 
       {music.length > 0 && (
         <Rail eyebrow="Sound" title="Music worth the volume" href="/browse?category=10" className="py-12">

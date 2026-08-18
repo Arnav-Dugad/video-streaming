@@ -68,7 +68,8 @@ export interface UserProfile {
     autoplay: boolean;
     ambientGlow: boolean;
     reduceMotion: boolean;
-    defaultQuality: 'auto' | 'hd1080' | 'hd720' | 'large';
+    /** A YouTube quality id ('hd1080', 'large', …) or 'auto'. */
+    defaultQuality: string;
   };
 }
 
