@@ -197,10 +197,23 @@ export interface Room {
   videoId: string;
   videoTitle: string;
   videoThumbnail: string;
-  /** Host clock, mirrored to every guest. */
+  /** Mirrored to every guest. `updatedAt` is written with Firestore's
+   *  serverTimestamp so all participants measure elapsed time against one
+   *  clock — see lib/server-clock.ts for why that matters. */
   playing: boolean;
   positionSeconds: number;
   updatedAt: number;
+  /** The host's own reading of the shared clock at the instant it sampled
+   *  `positionSeconds`. `updatedAt` is stamped later, once the write reaches
+   *  Google, so projecting from it runs guests ahead by the write latency.
+   *  Absent on rooms written by older builds — fall back to `updatedAt`. */
+  positionAtServerMs?: number;
+  /** When false, guests drive their own playback and the host only shares
+   *  what is on. On by default: a watch party where everyone is at a
+   *  different second is just several people watching alone. */
+  hostControls?: boolean;
+  /** Members currently buffering, so the room can wait for them. */
+  buffering?: string[];
   createdAt: number;
   members: Record<string, RoomMember>;
   /** Host-managed up-next list. Denormalised so the queue renders for guests
@@ -229,6 +242,33 @@ export interface RoomQueueItem {
   addedByUid: string;
   addedByName: string;
   addedAt: number;
+}
+
+/** A timestamped reaction, pinned to the second of the video it was sent at. */
+export interface RoomReaction {
+  id: string;
+  uid: string;
+  name: string;
+  emoji: string;
+  atSecond: number;
+  at: number;
+}
+
+export interface Friend {
+  uid: string;
+  handle: string;
+  displayName: string;
+  photoURL: string | null;
+  since: number;
+}
+
+/** A public directory entry, so a person can be found by handle without
+ *  exposing anything else about them. */
+export interface HandleEntry {
+  uid: string;
+  handle: string;
+  displayName: string;
+  photoURL: string | null;
 }
 
 export interface RoomMessage {

@@ -8,9 +8,11 @@ import {
 
 import { db } from './firebase';
 import type {
-  HistoryEntry, Playlist, Preferences, Room, RoomMessage, RoomQueueItem,
-  SavedVideo, SmartPlaylist, SmartRule, UserProfile, Video,
+  Friend, HandleEntry, HistoryEntry, Playlist, Preferences, Room, RoomMessage,
+  RoomQueueItem, RoomReaction, SavedVideo, SmartPlaylist, SmartRule,
+  UserProfile, Video,
 } from './types';
+import { serverClock } from './server-clock';
 
 /* ==========================================================================
    Firestore access layer.
@@ -72,7 +74,7 @@ export async function ensureProfile(
   if (snap.exists()) {
     const data = snap.data() as Partial<UserProfile>;
     // Merge forward so profiles written by older builds gain new fields.
-    return {
+    const existing: UserProfile = {
       uid,
       email: data.email ?? seed.email,
       displayName: data.displayName || seed.displayName,
@@ -83,6 +85,11 @@ export async function ensureProfile(
       interests: data.interests ?? [],
       preferences: { ...DEFAULT_PREFERENCES, ...(data.preferences ?? {}) },
     };
+    // Keep the public directory entry current — a renamed account should be
+    // findable under the name their friends actually see. Best effort: a
+    // failure here must never block signing in.
+    void publishHandle(existing).catch(() => {});
+    return existing;
   }
 
   const profile: UserProfile = {
@@ -97,6 +104,7 @@ export async function ensureProfile(
     preferences: { ...DEFAULT_PREFERENCES },
   };
   await setDoc(ref, profile);
+  void publishHandle(profile).catch(() => {});
   return profile;
 }
 
@@ -322,6 +330,95 @@ export async function deletePlaylist(id: string): Promise<void> {
   await deleteDoc(doc(store(), 'playlists', id));
 }
 
+/* ------------------------------- friends -------------------------------- */
+
+/** A tiny public directory so people can be found by handle. It holds only
+ *  what already appears next to someone's name in a room — never their email,
+ *  history or library. */
+export async function publishHandle(profile: UserProfile): Promise<void> {
+  await setDoc(doc(store(), 'handles', profile.handle.toLowerCase()), {
+    uid: profile.uid,
+    handle: profile.handle,
+    displayName: profile.displayName,
+    photoURL: profile.photoURL,
+  } satisfies HandleEntry);
+}
+
+export async function findByHandle(handle: string): Promise<HandleEntry | null> {
+  const clean = handle.trim().replace(/^@/, '').toLowerCase();
+  if (!clean) return null;
+  const snap = await getDoc(doc(store(), 'handles', clean));
+  return snap.exists() ? (snap.data() as HandleEntry) : null;
+}
+
+/** Friendship is stored on both sides, so each person can list their own
+ *  without ever querying anybody else's subtree. */
+export async function addFriend(me: UserProfile, them: HandleEntry): Promise<void> {
+  if (me.uid === them.uid) throw new Error('You cannot add yourself');
+
+  const batch = writeBatch(store());
+  batch.set(doc(store(), 'users', me.uid, 'friends', them.uid), {
+    uid: them.uid,
+    handle: them.handle,
+    displayName: them.displayName,
+    photoURL: them.photoURL,
+    since: Date.now(),
+  } satisfies Friend);
+  batch.set(doc(store(), 'users', them.uid, 'friends', me.uid), {
+    uid: me.uid,
+    handle: me.handle,
+    displayName: me.displayName,
+    photoURL: me.photoURL,
+    since: Date.now(),
+  } satisfies Friend);
+  await batch.commit();
+}
+
+export async function removeFriend(myUid: string, theirUid: string): Promise<void> {
+  const batch = writeBatch(store());
+  batch.delete(doc(store(), 'users', myUid, 'friends', theirUid));
+  batch.delete(doc(store(), 'users', theirUid, 'friends', myUid));
+  await batch.commit();
+}
+
+export async function listFriends(uid: string): Promise<Friend[]> {
+  const q = query(collection(store(), 'users', uid, 'friends'), orderBy('since', 'desc'));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => d.data() as Friend);
+}
+
+/** An invite lands in the friend's own subtree, which is the only place they
+ *  can read from — no shared inbox collection to secure. */
+export interface RoomInvite {
+  roomId: string;
+  code: string;
+  title: string;
+  videoTitle: string;
+  videoThumbnail: string;
+  fromUid: string;
+  fromName: string;
+  at: number;
+}
+
+export async function inviteToRoom(
+  friendUid: string,
+  invite: Omit<RoomInvite, 'at'>,
+): Promise<void> {
+  await setDoc(doc(store(), 'users', friendUid, 'invites', invite.roomId), {
+    ...invite,
+    at: Date.now(),
+  } satisfies RoomInvite);
+}
+
+export function watchInvites(uid: string, onChange: (invites: RoomInvite[]) => void): Unsubscribe {
+  const q = query(collection(store(), 'users', uid, 'invites'), orderBy('at', 'desc'), qLimit(20));
+  return onSnapshot(q, (snap) => onChange(snap.docs.map((d) => d.data() as RoomInvite)));
+}
+
+export async function dismissInvite(uid: string, roomId: string): Promise<void> {
+  await deleteDoc(doc(store(), 'users', uid, 'invites', roomId));
+}
+
 /* --------------------------- smart playlists ---------------------------- */
 
 export const DEFAULT_SMART_RULE: SmartRule = {
@@ -401,8 +498,13 @@ export async function createRoom(
     videoThumbnail: video.thumbnailHq || video.thumbnail,
     playing: false,
     positionSeconds: 0,
-    updatedAt: Date.now(),
+    // Server-stamped: every participant measures elapsed time against the
+    // same clock rather than their own.
+    positionAtServerMs: Date.now(),
+    updatedAt: serverTimestamp(),
     createdAt: Date.now(),
+    hostControls: true,
+    buffering: [],
     members: {
       [host.uid]: { name: host.name, photo: host.photo, joinedAt: Date.now() },
     },
@@ -410,16 +512,66 @@ export async function createRoom(
   return ref.id;
 }
 
+export async function deleteRoom(roomId: string): Promise<void> {
+  await deleteDoc(doc(store(), 'rooms', roomId));
+}
+
+export async function listMyRooms(uid: string): Promise<Room[]> {
+  const q = query(
+    collection(store(), 'rooms'),
+    where('hostUid', '==', uid),
+    orderBy('updatedAt', 'desc'),
+    qLimit(50),
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => toRoom(d.id, d.data()));
+}
+
+export async function setHostControls(roomId: string, on: boolean): Promise<void> {
+  await updateDoc(doc(store(), 'rooms', roomId), { hostControls: on });
+}
+
+/** Announce that this member is (or is no longer) stalled. The host can then
+ *  hold the room rather than leaving somebody permanently behind. */
+export async function setBuffering(roomId: string, uid: string, stalled: boolean): Promise<void> {
+  await updateDoc(doc(store(), 'rooms', roomId), {
+    buffering: stalled ? arrayUnion(uid) : arrayRemove(uid),
+  });
+}
+
+/** `updatedAt` comes back as a Firestore Timestamp; everything downstream
+ *  wants milliseconds. A write that has not reached the server yet has no
+ *  timestamp at all, so it falls back to the local clock for that instant. */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function toRoom(id: string, data: any): Room {
+  const stamp = data.updatedAt;
+  const updatedAt = typeof stamp?.toMillis === 'function' ? stamp.toMillis() : Number(stamp) || Date.now();
+  return { ...(data as Omit<Room, 'id'>), id, updatedAt };
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 export async function findRoomByCode(code: string): Promise<Room | null> {
   const q = query(collection(store(), 'rooms'), where('code', '==', code.toUpperCase()), qLimit(1));
   const snap = await getDocs(q);
   const d = snap.docs[0];
-  return d ? { id: d.id, ...(d.data() as Omit<Room, 'id'>) } : null;
+  return d ? toRoom(d.id, d.data()) : null;
 }
 
 export function watchRoom(roomId: string, onChange: (room: Room | null) => void): Unsubscribe {
+  const clock = serverClock(roomId);
+
   return onSnapshot(doc(store(), 'rooms', roomId), (snap) => {
-    onChange(snap.exists() ? { id: snap.id, ...(snap.data() as Omit<Room, 'id'>) } : null);
+    if (!snap.exists()) { onChange(null); return; }
+
+    const room = toRoom(snap.id, snap.data());
+
+    // Only snapshots that have actually round-tripped carry a real server
+    // timestamp; a local echo would teach the clock our own time back.
+    if (!snap.metadata.hasPendingWrites && !snap.metadata.fromCache) {
+      clock.observe(room.updatedAt);
+    }
+
+    onChange(room);
   });
 }
 
@@ -462,12 +614,42 @@ export async function leaveRoom(roomId: string, uid: string): Promise<void> {
   await updateDoc(ref, { members });
 }
 
-/** Only the host writes playback state; guests mirror it. */
+/** Only the host writes playback state; guests mirror it.
+ *
+ *  Two timestamps, deliberately. `updatedAt` is stamped by Google when the
+ *  write lands — authoritative, but late by however long the write took, and
+ *  useful mainly for training every participant's clock estimate.
+ *  `positionAtServerMs` is the host's own reading of that same shared clock at
+ *  the instant it sampled the position, which is what guests actually project
+ *  from: it carries no write-latency bias at all. */
 export async function syncRoomPlayback(
   roomId: string,
   state: { playing: boolean; positionSeconds: number; videoId?: string },
 ): Promise<void> {
-  await updateDoc(doc(store(), 'rooms', roomId), { ...state, updatedAt: Date.now() });
+  await updateDoc(doc(store(), 'rooms', roomId), {
+    ...state,
+    positionAtServerMs: serverClock(roomId).now(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/* ------------------------------ reactions ------------------------------- */
+
+export function watchRoomReactions(
+  roomId: string,
+  onChange: (reactions: RoomReaction[]) => void,
+): Unsubscribe {
+  const q = query(collection(store(), 'rooms', roomId, 'reactions'), orderBy('at', 'desc'), qLimit(30));
+  return onSnapshot(q, (snap) => {
+    onChange(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RoomReaction, 'id'>) })));
+  });
+}
+
+export async function sendReaction(
+  roomId: string,
+  reaction: Omit<RoomReaction, 'id' | 'at'>,
+): Promise<void> {
+  await addDoc(collection(store(), 'rooms', roomId, 'reactions'), { ...reaction, at: Date.now() });
 }
 
 export async function setRoomVideo(roomId: string, video: Video): Promise<void> {
@@ -477,7 +659,8 @@ export async function setRoomVideo(roomId: string, video: Video): Promise<void> 
     videoThumbnail: video.thumbnailHq || video.thumbnail,
     positionSeconds: 0,
     playing: true,
-    updatedAt: Date.now(),
+    positionAtServerMs: serverClock(roomId).now(),
+    updatedAt: serverTimestamp(),
   });
 }
 
@@ -540,7 +723,8 @@ export async function advanceRoomQueue(roomId: string): Promise<RoomQueueItem | 
     videoThumbnail: next.thumbnail,
     positionSeconds: 0,
     playing: true,
-    updatedAt: Date.now(),
+    positionAtServerMs: serverClock(roomId).now(),
+    updatedAt: serverTimestamp(),
     queue: rest,
   });
   return next;
@@ -549,7 +733,7 @@ export async function advanceRoomQueue(roomId: string): Promise<RoomQueueItem | 
 export async function listPublicRooms(max = 24): Promise<Room[]> {
   const q = query(collection(store(), 'rooms'), orderBy('updatedAt', 'desc'), qLimit(max));
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Room, 'id'>) }));
+  return snap.docs.map((d) => toRoom(d.id, d.data()));
 }
 
 export function watchRoomMessages(roomId: string, onChange: (msgs: RoomMessage[]) => void): Unsubscribe {
