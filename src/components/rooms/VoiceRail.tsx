@@ -9,7 +9,10 @@ import {
 
 import { VoiceMesh, explainVoiceError, hasTurn, type VoicePeer } from '@/lib/voice';
 import { firestoreTransport } from '@/lib/voice-transport';
-import { runVoiceSelfTest, type SelfTest } from '@/lib/voice-selftest';
+// `Check` is aliased: the lucide icon of the same name is already in scope.
+import {
+  playTestTone, runVoiceSelfTest, type Check as CheckResult, type SelfTest,
+} from '@/lib/voice-selftest';
 import { useVoiceUi } from '@/lib/voice-store';
 import { Avatar } from '@/components/ui/Avatar';
 import { toast } from '@/lib/store';
@@ -41,6 +44,8 @@ export function VoiceRail({ room, uid }: Props) {
   const [testing, setTesting] = useState(false);
   const [report, setReport] = useState<SelfTest | null>(null);
   const [blocked, setBlocked] = useState(false);
+  const [tone, setTone] = useState<CheckResult | null>(null);
+  const [toning, setToning] = useState(false);
 
   const mesh = useRef<VoiceMesh | null>(null);
   const setActive = useVoiceUi((s) => s.setActive);
@@ -124,6 +129,13 @@ export function VoiceRail({ room, uid }: Props) {
     } finally {
       setTesting(false);
     }
+  };
+
+  const testSound = async () => {
+    if (toning) return;
+    setToning(true);
+    setTone(null);
+    try { setTone(await playTestTone()); } finally { setToning(false); }
   };
 
   const toggleMute = () => {
@@ -319,13 +331,42 @@ export function VoiceRail({ room, uid }: Props) {
                 </ul>
               )}
 
+              {/* Two relay URLs are always tried — UDP and TCP — and one of
+                  them failing while the other works is normal and harmless.
+                  Painting that red made a working setup look broken. */}
               {report.iceErrors.length > 0 && (
                 <ul className="mt-1.5 space-y-0.5">
                   {report.iceErrors.map((e) => (
-                    <li key={e} className="text-[11px] leading-relaxed text-flare">{e}</li>
+                    <li
+                      key={e}
+                      className={cn(
+                        'text-[11px] leading-relaxed',
+                        report.candidates.relay > 0 ? 'text-faint' : 'text-flare',
+                      )}
+                    >
+                      {report.candidates.relay > 0 && 'ignored · '}{e}
+                    </li>
                   ))}
                 </ul>
               )}
+
+              {/* Nothing else can tell you whether the speaker works. */}
+              <div className="mt-2.5 border-t border-line pt-2.5">
+                <button
+                  onClick={testSound}
+                  disabled={toning}
+                  className="inline-flex h-8 items-center gap-2 rounded-lg border border-line px-3 text-[12px] text-cream-dim transition-[border-color,background-color] hover:border-line-strong hover:bg-cream/[0.05] disabled:opacity-60"
+                >
+                  {toning
+                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Playing…</>
+                    : <><Volume2 className="h-3.5 w-3.5" /> Play a test sound</>}
+                </button>
+                {tone && (
+                  <p className={cn('mt-1.5 text-[11.5px] leading-relaxed', tone.ok ? 'text-faint' : 'text-flare')}>
+                    {tone.detail}
+                  </p>
+                )}
+              </div>
 
               <p className="mt-2 border-t border-line pt-2 text-[12.5px] leading-relaxed text-cream">
                 {report.verdict}
@@ -381,6 +422,16 @@ export function VoiceRail({ room, uid }: Props) {
                     </span>
                     <span>{p.detail}</span>
                     {p.attempts > 1 && <span>· try {p.attempts}</span>}
+                    {/* The decisive number. Bytes climbing with nothing
+                        audible is a speaker problem; bytes stuck at zero is a
+                        media problem, and they share no fix. */}
+                    <span className={p.inboundBytes > 0 ? 'text-mint' : 'text-flare'}>
+                      · {p.inboundBytes > 0 ? `${(p.inboundBytes / 1024).toFixed(1)} kB in` : 'no audio in'}
+                    </span>
+                    {p.inboundBytes > 0 && !p.playing && (
+                      <span className="text-flare">· not playing</span>
+                    )}
+                    {p.muted && <span className="text-muted">· they are muted</span>}
                   </li>
                 ))}
                 <li className="pt-1">relay configured: {hasTurn ? 'yes' : 'no (STUN only)'}</li>

@@ -274,6 +274,86 @@ async function checkNetwork(): Promise<{
   };
 }
 
+/* ==========================================================================
+   Does this device make any sound at all?
+
+   Deliberately built on exactly the path a peer's audio takes — an oscillator
+   into a MediaStream, that stream into an <audio> element — rather than the
+   simpler route of playing an oscillator straight at the speakers. A phone can
+   happily play the second while refusing the first, and it is the first that
+   matters here.
+
+   If this is audible and a peer still is not, the fault is upstream of the
+   speaker: the other end is muted, or nothing is arriving.
+   ========================================================================== */
+export async function playTestTone(seconds = 1.4): Promise<Check> {
+  const Ctor = window.AudioContext
+    ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!Ctor) return { ok: false, label: 'Test sound', detail: 'This browser has no Web Audio support.' };
+
+  const ctx = new Ctor();
+  const audio = document.createElement('audio');
+
+  const cleanup = () => {
+    audio.srcObject = null;
+    audio.remove();
+    ctx.close().catch(() => {});
+  };
+
+  try {
+    await ctx.resume().catch(() => {});
+
+    const destination = ctx.createMediaStreamDestination();
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    oscillator.type = 'sine';
+    oscillator.frequency.value = 440;
+    // Quiet enough not to startle somebody wearing headphones.
+    gain.gain.value = 0.0001;
+    oscillator.connect(gain).connect(destination);
+
+    // A short ramp rather than a hard edge, which clicks.
+    const now = ctx.currentTime;
+    gain.gain.exponentialRampToValueAtTime(0.12, now + 0.05);
+    gain.gain.setValueAtTime(0.12, now + seconds - 0.1);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + seconds);
+
+    (audio as HTMLAudioElement & { playsInline?: boolean }).playsInline = true;
+    audio.setAttribute('playsinline', '');
+    audio.autoplay = true;
+    audio.style.display = 'none';
+    document.body.appendChild(audio);
+    audio.srcObject = destination.stream;
+
+    oscillator.start();
+
+    try {
+      await audio.play();
+    } catch {
+      cleanup();
+      return {
+        ok: false,
+        label: 'Test sound',
+        detail: 'The browser refused to play it. Tap the page once and try again.',
+      };
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+    oscillator.stop();
+    cleanup();
+
+    return {
+      ok: true,
+      label: 'Test sound',
+      detail: 'Played a tone the same way a person\u2019s voice is played. If you heard nothing, the fault is this device\u2019s output — check media volume, and that it is not routed to a headset.',
+    };
+  } catch (err) {
+    cleanup();
+    return { ok: false, label: 'Test sound', detail: (err as Error).message };
+  }
+}
+
 export async function runVoiceSelfTest(transport: VoiceTransport, uid: string): Promise<SelfTest> {
   // In parallel: they are independent, and three sequential timeouts would
   // make a failing test take half a minute.

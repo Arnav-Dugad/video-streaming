@@ -64,6 +64,8 @@ const HEARTBEAT_MS = 20_000;
  *  so this has to be forgiving enough not to evict somebody who is merely
  *  looking at their notifications. */
 const PRESENCE_STALE_MS = 70_000;
+/** How often the inbound audio counters are read. */
+const STATS_MS = 2000;
 
 /* A TURN provider's dashboard shows a bare `host:port`, because that is what
    its own examples want. WebRTC needs a scheme, and rejects the whole ICE
@@ -140,6 +142,12 @@ export interface VoicePeer {
   attempts: number;
   /** Raw WebRTC state, for the diagnostics panel. */
   detail: string;
+  /** Bytes of audio actually received from this peer. The single number that
+   *  separates "nothing is arriving" from "it arrives and this device will not
+   *  play it" — two problems that look identical and share no fix. */
+  inboundBytes: number;
+  /** Whether the element carrying their audio is actually running. */
+  playing: boolean;
 }
 
 export interface VoiceEvents {
@@ -170,6 +178,7 @@ interface Peer {
   session: string;
   startedAt: number;
   attempts: number;
+  inboundBytes: number;
 }
 
 /** Turns a signalling error into something a person can act on. Exported
@@ -200,6 +209,7 @@ export class VoiceMesh {
   private meter: number | null = null;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private statsTimer: ReturnType<typeof setInterval> | null = null;
   private session = Math.random().toString(36).slice(2, 10);
   private stopped = false;
   private anySpeaking = false;
@@ -263,6 +273,12 @@ export class VoiceMesh {
         .publishPresence({ session: this.session, muted: this.muted })
         .catch(() => { /* the next beat retries */ });
     }, HEARTBEAT_MS);
+
+    /* Reading the transport's own counters rather than trusting the state
+       machine. "Connected" only means ICE found a path; it says nothing about
+       whether audio is flowing along it, and nothing at all about whether the
+       device will play what arrives. */
+    this.statsTimer = setInterval(() => this.sampleStats(), STATS_MS);
   }
 
   async stop(): Promise<void> {
@@ -274,6 +290,7 @@ export class VoiceMesh {
     if (this.meter !== null) { cancelAnimationFrame(this.meter); this.meter = null; }
     if (this.watchdogTimer !== null) { clearInterval(this.watchdogTimer); this.watchdogTimer = null; }
     if (this.heartbeatTimer !== null) { clearInterval(this.heartbeatTimer); this.heartbeatTimer = null; }
+    if (this.statsTimer !== null) { clearInterval(this.statsTimer); this.statsTimer = null; }
 
     for (const uid of [...this.peers.keys()]) this.teardown(uid);
 
@@ -414,7 +431,7 @@ export class VoiceMesh {
     const peer: Peer = {
       pc, audio, queued: [], status: 'connecting', speaking: false,
       lastVoice: 0, level: 0, muted, session,
-      startedAt: Date.now(), attempts,
+      startedAt: Date.now(), attempts, inboundBytes: 0,
     };
     this.peers.set(uid, peer);
 
@@ -580,6 +597,27 @@ export class VoiceMesh {
     }
   }
 
+  private sampleStats(): void {
+    if (this.stopped) return;
+
+    for (const [uid, peer] of this.peers) {
+      peer.pc.getStats().then((report) => {
+        if (this.peers.get(uid) !== peer) return;
+        let bytes = 0;
+        report.forEach((entry) => {
+          const stat = entry as { type?: string; kind?: string; bytesReceived?: number };
+          if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
+            bytes = Math.max(bytes, stat.bytesReceived ?? 0);
+          }
+        });
+        if (bytes !== peer.inboundBytes) {
+          peer.inboundBytes = bytes;
+          this.publish();
+        }
+      }).catch(() => { /* the connection went away mid-read */ });
+    }
+  }
+
   /** Opus negotiates high by default; speech does not need it, and the room is
    *  streaming video over the same link. */
   private capBitrate(pc: RTCPeerConnection): void {
@@ -695,6 +733,8 @@ export class VoiceMesh {
       level: p.level,
       muted: p.muted,
       attempts: p.attempts,
+      inboundBytes: p.inboundBytes,
+      playing: !p.audio.paused && p.audio.readyState > 0,
       detail: `${p.pc.connectionState}/${p.pc.iceConnectionState}${this.isCaller(uid) ? ' · calling' : ' · answering'}`,
     })));
   }
