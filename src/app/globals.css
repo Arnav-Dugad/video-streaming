@@ -303,6 +303,22 @@
 .range-flare:hover::-webkit-slider-thumb { transform: scale(1.25); }
 
 /* ==========================================================================
+   Fullscreen
+
+   The player is positioned with inline top/left/width/height driven by motion
+   values, and inline styles beat the UA's `:fullscreen { width:100% }` rule.
+   PlayerHost writes screen-sized values on fullscreenchange, and this is the
+   safety net for the frame before that lands.
+   ========================================================================== */
+
+.player-host:fullscreen {
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  border-radius: 0 !important;
+}
+
+/* ==========================================================================
    View transitions
 
    The thumbnail-to-player morph. Browsers without the View Transitions API

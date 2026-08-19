@@ -91,7 +91,10 @@ export function Hero({ videos }: { videos: Video[] }) {
   return (
     <section
       ref={rootRef}
-      className="relative -mt-16 flex min-h-[max(34rem,88svh)] flex-col justify-end overflow-hidden sm:-mt-[68px]"
+      // `isolate` is load-bearing. The backdrop below sits at -z-10, and
+      // without a stacking context here it escapes all the way past <body>
+      // and paints behind its background colour — invisible.
+      className="relative isolate -mt-16 flex min-h-[max(34rem,88svh)] flex-col justify-end overflow-hidden sm:-mt-[68px]"
       aria-roledescription="carousel"
       aria-label="Featured"
     >

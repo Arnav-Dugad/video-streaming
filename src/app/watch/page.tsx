@@ -9,6 +9,7 @@ import { WatchActions } from '@/components/watch/WatchActions';
 import { Description } from '@/components/watch/Description';
 import { Comments } from '@/components/watch/Comments';
 import { UpNext } from '@/components/watch/UpNext';
+import { ChapterList } from '@/components/watch/ChapterList';
 import { hmsToSeconds } from '@/lib/format';
 
 export const revalidate = 1800;
@@ -95,6 +96,11 @@ export default async function WatchPage({ searchParams }: { searchParams: Search
             <Description video={video} />
           </div>
 
+          {/* Renders nothing unless the description holds a real chapter list. */}
+          <div className="mt-5 xl:hidden">
+            <ChapterList video={video} />
+          </div>
+
           {/* Up next moves inline below the fold on narrow screens. */}
           <div className="mt-8 xl:hidden">
             <UpNext videos={related} />
@@ -107,7 +113,8 @@ export default async function WatchPage({ searchParams }: { searchParams: Search
 
         {/* ----------------------------- sidebar ---------------------------- */}
         <aside className="hidden xl:block">
-          <div className="sticky top-24">
+          <div className="sticky top-24 space-y-5">
+            <ChapterList video={video} />
             <UpNext videos={related} />
           </div>
         </aside>

@@ -110,6 +110,19 @@ export function PlayerHost() {
      commit and cascade an extra pass. */
   const [pending, setPending] = useState<{ after: string; video: Video } | null>(null);
 
+  /* Fullscreen has to drive the same motion values as every other mode.
+     The element is positioned with inline top/left/width/height, and inline
+     styles beat the UA's `:fullscreen { width:100% }` rule — so entering
+     fullscreen used to leave the player pinned at its inline-slot rectangle
+     on a black screen, which reads as "fullscreen does nothing". */
+  const [fullscreen, setFullscreen] = useState(false);
+
+  useEffect(() => {
+    const onChange = () => setFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
   // Only extracted while it will actually be shown — the glow is inline-only.
   const palette = useAmbientPalette(
     video?.thumbnailHq || video?.thumbnail,
@@ -158,26 +171,36 @@ export function PlayerHost() {
     if (!video) return;
 
     const compute = (): { rect: Rect; corner: number } => {
+      // Fullscreen outranks every mode: the element genuinely occupies the
+      // whole screen, so the values it is positioned with must say so too.
+      if (fullscreen) return { rect: theatreRect(), corner: 0 };
       if (mode === 'theatre') return { rect: theatreRect(), corner: 0 };
       if (mode === 'inline' && slot) return { rect: slot, corner: 14 };
       return { rect: dockRect(mobile), corner: 12 };
     };
 
     const { rect, corner } = compute();
-    const modeChanged = lastMode.current !== mode;
+    const key = fullscreen ? 'fullscreen' : mode;
+    const modeChanged = lastMode.current !== key;
     // First paint should land in place, not fly in from 0,0.
-    applyRect(rect, positioned.current && modeChanged, corner);
-    lastMode.current = mode;
+    // Never spring into or out of fullscreen — the browser is already
+    // animating the transition, and a second animation on top of it reads as
+    // the player lagging behind the screen.
+    applyRect(rect, positioned.current && modeChanged && !fullscreen && lastMode.current !== 'fullscreen', corner);
+    lastMode.current = key;
     positioned.current = true;
-  }, [video, mode, slot, mobile, applyRect]);
+  }, [video, mode, slot, mobile, fullscreen, applyRect]);
 
   // The dock is viewport-anchored, so it has to follow window resizes itself.
   useEffect(() => {
-    if (mode !== 'docked' && mode !== 'theatre') return;
-    const onResize = () => applyRect(mode === 'theatre' ? theatreRect() : dockRect(mobile), false, mode === 'theatre' ? 0 : 12);
+    if (!fullscreen && mode !== 'docked' && mode !== 'theatre') return;
+    const onResize = () => {
+      if (fullscreen || mode === 'theatre') applyRect(theatreRect(), false, 0);
+      else applyRect(dockRect(mobile), false, 12);
+    };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, [mode, mobile, applyRect]);
+  }, [mode, mobile, fullscreen, applyRect]);
 
   /* ------------------------------ actions ------------------------------- */
 
@@ -360,6 +383,10 @@ export function PlayerHost() {
 
   // Not worth it for a corner dock, and pointless once the surface is already
   // 1920 wide — at that size the embed asks for a high rendition by itself.
+  // In fullscreen the surface is already screen-sized, so `surfaceExceedsVirtual`
+  // turns oversizing off by itself on any display 1920 or wider — which is
+  // exactly right, since at that size the embed asks for a high rendition
+  // natively and scaling would only cost sharpness.
   const oversized = highRes && !docked && !surfaceExceedsVirtual;
 
   return (
@@ -380,7 +407,9 @@ export function PlayerHost() {
         className={cn(
           // `player-host` gives it its own view-transition-name so it is not
           // captured into the root snapshot and ghosted during a morph.
-          'player-host fixed z-[80] overflow-hidden bg-black',
+          // `isolate` keeps the -z-10 ambient glow from escaping behind the
+          // page background.
+          'player-host isolate fixed z-[80] overflow-hidden bg-black',
           docked && 'shadow-float ring-1 ring-line-strong',
         )}
         onMouseEnter={() => setDockHover(true)}

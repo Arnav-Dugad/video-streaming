@@ -147,7 +147,7 @@ export function LibraryClient() {
                 aria-selected={active}
                 onClick={() => router.replace(t.id === 'saved' ? '/library' : `/library?tab=${t.id}`, { scroll: false })}
                 className={cn(
-                  'relative flex shrink-0 items-center gap-2 rounded-full px-3.5 py-2 text-[12.5px] font-medium transition-colors duration-300',
+                  'relative isolate flex shrink-0 items-center gap-2 rounded-full px-3.5 py-2 text-[12.5px] font-medium transition-colors duration-300',
                   active ? 'text-ink-950' : 'text-cream-dim hover:text-cream',
                 )}
               >

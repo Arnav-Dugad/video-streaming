@@ -43,7 +43,7 @@ export function MoodPicker() {
               whileHover={{ y: -3 }}
               whileTap={{ scale: 0.97 }}
               onClick={() => router.push(`/search?q=${encodeURIComponent(mood.query)}`)}
-              className="group relative overflow-hidden rounded-xl border border-line px-5 py-3.5 text-left transition-[border-color] duration-300 hover:border-line-strong"
+              className="group relative isolate overflow-hidden rounded-xl border border-line px-5 py-3.5 text-left transition-[border-color] duration-300 hover:border-line-strong"
               style={{ ['--h' as string]: mood.hue }}
             >
               {/* Wash tinted by the mood's own hue — the only per-item colour

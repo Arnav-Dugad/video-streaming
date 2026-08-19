@@ -7,7 +7,7 @@ import { AnimatePresence, motion, useMotionValueEvent, useScroll } from 'motion/
 import {
   BarChart3, Bookmark, Clock, Command, Compass, Flame, LogOut, Menu, Search,
   Settings, Sparkles, SplitSquareHorizontal, TvMinimalPlay, User as UserIcon,
-  X, Users,
+  X, Users, Zap,
 } from 'lucide-react';
 
 import { Logo } from './Logo';
@@ -29,6 +29,7 @@ import { cn } from '@/lib/cn';
 
 const NAV = [
   { href: '/browse', label: 'Browse', icon: Compass },
+  { href: '/shorts', label: 'Shorts', icon: Zap },
   { href: '/trending', label: 'Trending', icon: Flame },
   { href: '/collections', label: 'Collections', icon: Sparkles },
   { href: '/rooms', label: 'Rooms', icon: Users },

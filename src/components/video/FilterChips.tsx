@@ -35,7 +35,7 @@ export function FilterChips({
             scroll={false}
             aria-current={isActive ? 'true' : undefined}
             className={cn(
-              'relative shrink-0 rounded-full px-3.5 py-1.5 text-[12.5px] font-medium whitespace-nowrap',
+              'relative isolate shrink-0 rounded-full px-3.5 py-1.5 text-[12.5px] font-medium whitespace-nowrap',
               'transition-colors duration-300',
               isActive ? 'text-ink-950' : 'text-cream-dim hover:text-cream',
             )}

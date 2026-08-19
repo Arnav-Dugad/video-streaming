@@ -68,7 +68,7 @@ export default async function CollectionPage({ params }: { params: Params }) {
 
   return (
     <>
-      <header className="relative overflow-hidden">
+      <header className="relative isolate overflow-hidden">
         <div
           aria-hidden
           className="absolute inset-0 -z-10"

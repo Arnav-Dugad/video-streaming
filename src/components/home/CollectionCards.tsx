@@ -49,7 +49,7 @@ export function CollectionCards({
                 href={`/collections/${c.slug}`}
                 data-cursor="Open"
                 className={cn(
-                  'group relative flex h-full min-h-[16rem] flex-col justify-between overflow-hidden rounded-2xl',
+                  'group relative isolate flex h-full min-h-[16rem] flex-col justify-between overflow-hidden rounded-2xl',
                   'border border-line p-6 transition-[border-color] duration-500 hover:border-line-strong',
                 )}
               >
