@@ -20,6 +20,7 @@ import { RoomSuggestions } from './RoomSuggestions';
 import { FriendsPanel } from './FriendsPanel';
 import { RoomQr } from './RoomQr';
 import { RoomRecap } from './RoomRecap';
+import { VoiceRail } from './VoiceRail';
 import { Avatar } from '@/components/ui/Avatar';
 import { ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/PageHeader';
@@ -333,6 +334,10 @@ export function RoomClient({ roomId }: { roomId: string }) {
                 : 'The host has left playback to you. Everyone here is watching the same video at their own pace.'}
             </p>
           )}
+
+          <div className="mt-3">
+            <VoiceRail room={room} uid={user.uid} />
+          </div>
 
           <div className="mt-5 space-y-5">
             <RoomQueue room={room} user={user} isHost={isHost} />

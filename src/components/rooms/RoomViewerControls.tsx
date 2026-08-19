@@ -13,6 +13,7 @@ import {
   setCaptionTrack as applyCaptionTrack, type CaptionTrack,
 } from '@/lib/player-modules';
 import { toast } from '@/lib/store';
+import { DUCK_FACTOR, useVoiceUi } from '@/lib/voice-store';
 import { cn } from '@/lib/cn';
 import type { YTPlayer } from '@/hooks/useYouTubeApi';
 
@@ -97,11 +98,28 @@ export function RoomViewerControls({ api, ready, surfaceRef, videoId }: Props) {
 
   /* ------------------------------ volume -------------------------------- */
 
+  /* Ducking. `volume` stays the level the viewer actually chose; what reaches
+     the player is that level scaled by whether anybody is talking. Writing the
+     ducked value into state instead would mean the slider crept downwards
+     every time someone spoke, and the original level would be lost. */
+  const ducked = useVoiceUi((s) => s.active && s.someoneSpeaking);
+
+  const applyVolume = useCallback((level: number, duck: boolean) => {
+    const p = api();
+    if (!p) return;
+    p.setVolume(Math.round(level * (duck ? DUCK_FACTOR : 1)));
+  }, [api]);
+
+  useEffect(() => {
+    if (muted) return;
+    applyVolume(volume, ducked);
+  }, [ducked, volume, muted, applyVolume]);
+
   const changeVolume = (v: number) => {
     const p = api();
     setVolume(v);
     setMuted(v === 0);
-    p?.setVolume(v);
+    applyVolume(v, ducked);
     if (v === 0) p?.mute(); else p?.unMute();
   };
 
@@ -110,7 +128,7 @@ export function RoomViewerControls({ api, ready, surfaceRef, videoId }: Props) {
     if (muted || volume === 0) {
       const restored = volume || 60;
       p?.unMute();
-      p?.setVolume(restored);
+      applyVolume(restored, ducked);
       setVolume(restored);
       setMuted(false);
     } else {

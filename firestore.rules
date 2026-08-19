@@ -187,6 +187,50 @@ service cloud.firestore {
         allow delete: if isSelf(resource.data.uid);
       }
 
+      /* ------------------------------ voice ------------------------------
+         Two collections, both scoped to the room and both ephemeral.
+
+         `voice` is presence: one document per participant, named by their uid,
+         writable only by them. That naming is the whole authorisation model —
+         nobody can announce somebody else, or hang them up.
+
+         `signals` is a mailbox for WebRTC offers, answers and ICE candidates.
+         An envelope may only be created in the sender's own name, and only a
+         member may read the collection at all. Either endpoint may delete: the
+         recipient deletes on read, which is what keeps a replayed offer from
+         tearing down a working connection, and the sender clears anything
+         never collected when they leave.
+
+         Nothing here carries audio. The media goes peer to peer and never
+         touches Firestore. */
+      match /voice/{memberUid} {
+        // `isMember()` cannot be used below this line: it reads
+        // `resource.data.members`, and inside a subcollection `resource` is
+        // the subcollection document, not the room. Reaching back for the room
+        // with get() would bill a document read on every signalling message,
+        // which for ICE candidates is a great many — and it would buy nothing,
+        // because the room itself is already readable by any signed-in user.
+        // The room id and the six-character code remain the access control.
+        allow read: if signedIn();
+        allow write: if isSelf(memberUid);
+      }
+
+      match /signals/{signalId} {
+        // Reads are scoped by the addressee, which the client's query must
+        // therefore also be scoped by — nobody can list somebody else's mail.
+        allow read: if signedIn() && resource.data.to == request.auth.uid;
+        allow create: if signedIn()
+                      && request.resource.data.from == request.auth.uid
+                      && request.resource.data.to is string
+                      && request.resource.data.kind in ['offer', 'answer', 'candidate']
+                      && request.resource.data.payload is string
+                      && request.resource.data.payload.size() <= 20000;
+        allow update: if false;
+        allow delete: if signedIn()
+                      && (resource.data.to == request.auth.uid
+                          || resource.data.from == request.auth.uid);
+      }
+
       match /reactions/{reactionId} {
         allow read: if signedIn();
         allow create: if signedIn()
