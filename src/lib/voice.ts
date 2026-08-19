@@ -65,6 +65,39 @@ const HEARTBEAT_MS = 20_000;
  *  looking at their notifications. */
 const PRESENCE_STALE_MS = 70_000;
 
+/* A TURN provider's dashboard shows a bare `host:port`, because that is what
+   its own examples want. WebRTC needs a scheme, and rejects the whole ICE
+   server list if any entry lacks one — so pasting the dashboard value verbatim
+   produces zero relay candidates and no error anybody can see.
+
+   Rather than make that somebody's problem, the value is normalised: quotes
+   and whitespace stripped, `turn:` added when no scheme is present, and a TCP
+   variant offered alongside UDP so a network that blocks UDP outright still
+   has a way through. */
+export function turnUrls(): string[] {
+  const raw = process.env.NEXT_PUBLIC_TURN_URL;
+  if (!raw) return [];
+
+  const urls: string[] = [];
+
+  for (const part of raw.split(',')) {
+    const cleaned = part.trim().replace(/^["']|["']$/g, '');
+    if (!cleaned) continue;
+
+    const url = /^(turns?|stun):/i.test(cleaned) ? cleaned : `turn:${cleaned}`;
+    if (!urls.includes(url)) urls.push(url);
+
+    // Only for plain `turn:` without an explicit transport — `turns:` is
+    // already TCP, and a hand-written ?transport= is a deliberate choice.
+    if (/^turn:/i.test(url) && !/[?&]transport=/i.test(url)) {
+      const tcp = `${url}?transport=tcp`;
+      if (!urls.includes(tcp)) urls.push(tcp);
+    }
+  }
+
+  return urls;
+}
+
 /** Exported so the self-test probes exactly the servers a real call uses,
  *  rather than a second list that could drift out of step with this one. */
 export function iceServers(): RTCIceServer[] {
@@ -77,11 +110,12 @@ export function iceServers(): RTCIceServer[] {
      the only fix is a relay. Set these three and the mesh will fall back to
      one. Without them a small fraction of pairs simply will not connect, and
      the UI says so rather than spinning forever. */
-  const url = process.env.NEXT_PUBLIC_TURN_URL;
-  const username = process.env.NEXT_PUBLIC_TURN_USERNAME;
-  const credential = process.env.NEXT_PUBLIC_TURN_CREDENTIAL;
-  if (url && username && credential) {
-    servers.push({ urls: url.split(',').map((u) => u.trim()).filter(Boolean), username, credential });
+  const urls = turnUrls();
+  const username = process.env.NEXT_PUBLIC_TURN_USERNAME?.trim().replace(/^["\']|["\']$/g, '');
+  const credential = process.env.NEXT_PUBLIC_TURN_CREDENTIAL?.trim().replace(/^["\']|["\']$/g, '');
+
+  if (urls.length > 0 && username && credential) {
+    servers.push({ urls, username, credential });
   }
 
   return servers;
@@ -114,6 +148,9 @@ export interface VoiceEvents {
   onSpeaking(speaking: boolean): void;
   onSelfLevel(level: number): void;
   onError(message: string): void;
+  /** The browser refused to play incoming audio. Only a real tap can fix it,
+   *  so the UI has to ask for one rather than failing silently. */
+  onPlaybackBlocked(blocked: boolean): void;
 }
 
 interface Peer {
@@ -167,6 +204,7 @@ export class VoiceMesh {
   private stopped = false;
   private anySpeaking = false;
   private muted = false;
+  private playbackBlocked = false;
 
   constructor(
     private uid: string,
@@ -185,6 +223,12 @@ export class VoiceMesh {
     });
 
     if (this.stopped) { this.releaseLocal(); return; }
+
+    /* Built here, while the click that started voice is still the reason this
+       code is running. An AudioContext created later starts suspended on
+       mobile and cannot be resumed without another tap — and a suspended
+       context is a second, quieter way for incoming audio to go nowhere. */
+    this.context();
 
     this.startMetering();
 
@@ -250,6 +294,32 @@ export class VoiceMesh {
     this.transport
       .publishPresence({ session: this.session, muted })
       .catch(() => { /* the others hear the silence regardless */ });
+  }
+
+  /** Plays an element, and remembers if the browser said no. */
+  private tryPlay(audio: HTMLAudioElement): void {
+    audio.play().then(
+      () => {
+        if (!this.playbackBlocked) return;
+        // One recovering is enough to know the block has lifted.
+        if ([...this.peers.values()].every((p) => !p.audio.paused)) {
+          this.playbackBlocked = false;
+          this.events.onPlaybackBlocked(false);
+        }
+      },
+      () => {
+        if (this.playbackBlocked || this.stopped) return;
+        this.playbackBlocked = true;
+        this.events.onPlaybackBlocked(true);
+      },
+    );
+  }
+
+  /** Called from a real tap. Retries every element and resumes the audio
+   *  graph, which is the only thing a phone will accept once it has refused. */
+  resumePlayback(): void {
+    this.audioContext?.resume().catch(() => {});
+    for (const peer of this.peers.values()) this.tryPlay(peer.audio);
   }
 
   private releaseLocal(): void {
@@ -328,6 +398,15 @@ export class VoiceMesh {
 
     const audio = document.createElement('audio');
     audio.autoplay = true;
+    /* iOS refuses to play any media element that has not opted out of its
+       fullscreen takeover, even audio-only ones with no visual at all. Both
+       spellings are needed: the property for browsers that expose it, the
+       attribute for the ones that only read markup. */
+    // `playsInline` is typed only on HTMLVideoElement, but every engine that
+    // enforces the policy reads it off audio elements too.
+    (audio as HTMLAudioElement & { playsInline?: boolean }).playsInline = true;
+    audio.setAttribute('playsinline', '');
+    audio.setAttribute('autoplay', '');
     // Kept out of the layout entirely; the UI shows levels, not players.
     audio.style.display = 'none';
     document.body.appendChild(audio);
@@ -350,9 +429,12 @@ export class VoiceMesh {
       const stream = event.streams[0];
       if (!stream) return;
       peer.audio.srcObject = stream;
-      // Joining voice is itself a click, so autoplay policy is satisfied —
-      // but a rejected play() must not take the connection down with it.
-      peer.audio.play().catch(() => {});
+      /* The gesture that started voice is long over by the time a peer's
+         audio arrives, and on a phone that is exactly when autoplay policy
+         bites: the connection is perfect, packets are flowing, and nothing
+         comes out of the speaker. Swallowing this is what produced "I can
+         hear them on the laptop but not the phone". */
+      this.tryPlay(peer.audio);
       // Chrome will not pump a peer-connection stream through Web Audio unless
       // something is also playing it, so the element above is load-bearing for
       // the level meters rather than decoration.

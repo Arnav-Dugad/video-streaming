@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlertTriangle, Check, ChevronDown, Loader2, Mic, MicOff, PhoneOff, Radio, Stethoscope, X,
+  AlertTriangle, Check, ChevronDown, Loader2, Mic, MicOff, PhoneOff, Radio,
+  Stethoscope, Volume2, X,
 } from 'lucide-react';
 
 import { VoiceMesh, explainVoiceError, hasTurn, type VoicePeer } from '@/lib/voice';
@@ -39,6 +40,7 @@ export function VoiceRail({ room, uid }: Props) {
   const [diagnostics, setDiagnostics] = useState(false);
   const [testing, setTesting] = useState(false);
   const [report, setReport] = useState<SelfTest | null>(null);
+  const [blocked, setBlocked] = useState(false);
 
   const mesh = useRef<VoiceMesh | null>(null);
   const setActive = useVoiceUi((s) => s.setActive);
@@ -52,6 +54,7 @@ export function VoiceRail({ room, uid }: Props) {
     setMuted(false);
     setSelfLevel(0);
     setFault(null);
+    setBlocked(false);
     setActive(false);
     live?.stop().catch(() => {});
   }, [setActive]);
@@ -81,6 +84,7 @@ export function VoiceRail({ room, uid }: Props) {
         setFault(message);
         toast(message, { tone: 'error' });
       },
+      onPlaybackBlocked: setBlocked,
     });
 
     try {
@@ -241,6 +245,29 @@ export function VoiceRail({ room, uid }: Props) {
         )}
       </AnimatePresence>
 
+      {/* Autoplay policy will not be argued with, only tapped. A phone that
+          refuses incoming audio produces a perfect connection with silence
+          coming out of it, so this asks for the one thing that fixes it. */}
+      <AnimatePresence>
+        {state === 'on' && blocked && (
+          <motion.button
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            onClick={() => mesh.current?.resumePlayback()}
+            className="mt-2 flex w-full items-center gap-2 overflow-hidden rounded-lg bg-flare/[0.12] px-3 py-2.5 text-left transition-colors hover:bg-flare/[0.18]"
+          >
+            <Volume2 className="h-4 w-4 shrink-0 text-flare" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[12.5px] font-medium text-cream">Tap to hear the room</span>
+              <span className="block text-[11.5px] leading-relaxed text-cream-dim">
+                Your browser is holding the incoming audio until you ask for it.
+              </span>
+            </span>
+          </motion.button>
+        )}
+      </AnimatePresence>
+
       {/* The self-test report. Ordered the way the failures have to be fixed
           in, with the one sentence worth reading at the bottom. */}
       <AnimatePresence>
@@ -281,6 +308,24 @@ export function VoiceRail({ room, uid }: Props) {
               <p className="mt-2.5 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">
                 candidates · host {report.candidates.host} · public {report.candidates.srflx} · relay {report.candidates.relay}
               </p>
+
+              {/* The exact URLs that were tried, so a typo in an environment
+                  variable is something you can see rather than deduce. */}
+              {report.turnUrls.length > 0 && (
+                <ul className="mt-1 space-y-0.5 font-mono text-[10px] text-faint">
+                  {report.turnUrls.map((u) => (
+                    <li key={u} className="truncate">relay · {u}</li>
+                  ))}
+                </ul>
+              )}
+
+              {report.iceErrors.length > 0 && (
+                <ul className="mt-1.5 space-y-0.5">
+                  {report.iceErrors.map((e) => (
+                    <li key={e} className="text-[11px] leading-relaxed text-flare">{e}</li>
+                  ))}
+                </ul>
+              )}
 
               <p className="mt-2 border-t border-line pt-2 text-[12.5px] leading-relaxed text-cream">
                 {report.verdict}

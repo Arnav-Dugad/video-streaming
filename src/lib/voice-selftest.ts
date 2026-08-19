@@ -1,6 +1,6 @@
 'use client';
 
-import { iceServers, hasTurn } from './voice';
+import { iceServers, hasTurn, turnUrls } from './voice';
 import type { Envelope, VoiceTransport } from './voice-transport';
 
 /* ==========================================================================
@@ -40,6 +40,13 @@ export interface SelfTest {
   signalling: Check;
   network: Check;
   candidates: { host: number; srflx: number; relay: number };
+  /** Exactly the TURN URLs that were tried, after normalisation — so a typo
+   *  in the environment variable is visible rather than inferred. */
+  turnUrls: string[];
+  /** What the STUN/TURN servers said when they refused. This is the answer to
+   *  "why is there no relay candidate", and it is otherwise only visible in
+   *  the browser console. */
+  iceErrors: string[];
   /** The single sentence worth reading. */
   verdict: string;
   /** What to actually do about it, when there is something to do. */
@@ -146,18 +153,49 @@ async function checkSignalling(transport: VoiceTransport, uid: string): Promise<
 
 /** Gathers candidates against the configured ICE servers and reports which
  *  kinds the network actually allows. */
-async function checkNetwork(): Promise<{ check: Check; candidates: SelfTest['candidates'] }> {
+/** 401 and 403 mean the server heard us and said no; everything else is the
+ *  server not being reachable at all. Different problems, different fixes. */
+function describeIceError(code: number, text: string, url: string): string {
+  const host = url.replace(/^(turns?|stun):/i, '').split('?')[0];
+  if (code === 401) return `${host} rejected the credentials (401). The username or password is wrong, or has been rotated.`;
+  if (code === 403) return `${host} refused the request (403). The account may be over quota or the server not allowed for this plan.`;
+  if (code === 438) return `${host} asked for a retry (438) and never completed. Usually a clock skew problem.`;
+  if (code === 701) return `${host} could not be reached (701). The hostname is wrong, or this network blocks it.`;
+  return `${host}: ${text || 'no detail'} (${code})`;
+}
+
+async function checkNetwork(): Promise<{
+  check: Check;
+  candidates: SelfTest['candidates'];
+  iceErrors: string[];
+}> {
   const candidates = { host: 0, srflx: 0, relay: 0 };
+  const iceErrors: string[] = [];
 
   let pc: RTCPeerConnection;
   try {
     pc = new RTCPeerConnection({ iceServers: iceServers() });
   } catch (err) {
+    // The commonest cause is a URL with no scheme, which WebRTC rejects
+    // outright — and which is exactly what a provider dashboard hands you.
     return {
-      check: { ok: false, label: 'Network', detail: `WebRTC is unavailable: ${(err as Error).message}` },
+      check: {
+        ok: false,
+        label: 'Network',
+        detail: `WebRTC rejected the server list: ${(err as Error).message}`,
+      },
       candidates,
+      iceErrors,
     };
   }
+
+  pc.onicecandidateerror = (event) => {
+    const e = event as RTCPeerConnectionIceErrorEvent;
+    // STUN servers we do not control time out constantly and say nothing
+    // useful; only failures against a configured relay are worth reporting.
+    const message = describeIceError(e.errorCode, e.errorText, e.url ?? '');
+    if (!iceErrors.includes(message)) iceErrors.push(message);
+  };
 
   // A data channel is the cheapest way to make the browser gather at all —
   // without a track or a channel there is nothing to negotiate.
@@ -185,10 +223,17 @@ async function checkNetwork(): Promise<{ check: Check; candidates: SelfTest['can
 
   try { pc.close(); } catch { /* already gone */ }
 
+  // Errors against the relay are the interesting ones; a silent STUN server
+  // is background noise.
+  const relayErrors = iceErrors.filter((e) => turnUrls().some(
+    (u) => e.startsWith(u.replace(/^(turns?|stun):/i, '').split('?')[0]),
+  ));
+
   if (candidates.relay > 0) {
     return {
       check: { ok: true, label: 'Network', detail: 'A relay is reachable — this will connect from anywhere.' },
       candidates,
+      iceErrors,
     };
   }
 
@@ -197,9 +242,12 @@ async function checkNetwork(): Promise<{ check: Check; candidates: SelfTest['can
       check: {
         ok: false,
         label: 'Network',
-        detail: 'A relay is configured but gave out no address. The TURN URL, username or credential is wrong.',
+        detail: relayErrors.length > 0
+          ? relayErrors[0]
+          : 'A relay is configured but never answered. Check the hostname, and whether this network allows it.',
       },
       candidates,
+      iceErrors,
     };
   }
 
@@ -211,6 +259,7 @@ async function checkNetwork(): Promise<{ check: Check; candidates: SelfTest['can
         detail: 'STUN found this machine’s public address. Most connections will work; restrictive networks will not.',
       },
       candidates,
+      iceErrors,
     };
   }
 
@@ -221,6 +270,7 @@ async function checkNetwork(): Promise<{ check: Check; candidates: SelfTest['can
       detail: 'No public address could be discovered. This network blocks STUN, so voice needs a relay.',
     },
     candidates,
+    iceErrors,
   };
 }
 
@@ -238,6 +288,8 @@ export async function runVoiceSelfTest(transport: VoiceTransport, uid: string): 
     signalling,
     network: network.check,
     candidates: network.candidates,
+    turnUrls: turnUrls(),
+    iceErrors: network.iceErrors,
     verdict: '',
   };
 
@@ -252,7 +304,11 @@ export async function runVoiceSelfTest(transport: VoiceTransport, uid: string): 
     result.remedy = 'Run: firebase deploy --only firestore:rules';
   } else if (!network.check.ok && hasTurn) {
     result.verdict = 'Signalling works, but the relay is not answering.';
-    result.remedy = 'Check NEXT_PUBLIC_TURN_URL, _USERNAME and _CREDENTIAL, then redeploy.';
+    result.remedy = network.check.detail.includes('401')
+      ? 'The credentials are wrong or have been rotated. Copy them again from the provider and redeploy.'
+      : network.check.detail.includes('701')
+        ? 'The hostname is wrong. Copy it exactly from the provider dashboard and redeploy.'
+        : 'Check NEXT_PUBLIC_TURN_URL, _USERNAME and _CREDENTIAL, then redeploy.';
   } else if (!network.check.ok) {
     result.verdict = 'Signalling works, but this network gives out no reachable address.';
     result.remedy = 'Add a TURN relay: set NEXT_PUBLIC_TURN_URL, _USERNAME and _CREDENTIAL.';
