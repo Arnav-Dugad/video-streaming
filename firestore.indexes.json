@@ -44,21 +44,6 @@
           "order": "DESCENDING"
         }
       ]
-    },
-    {
-      "_comment": "voice signalling: where to == uid, orderBy at asc",
-      "collectionGroup": "signals",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "to",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "at",
-          "order": "ASCENDING"
-        }
-      ]
     }
   ],
   "fieldOverrides": []

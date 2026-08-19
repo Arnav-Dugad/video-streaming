@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { AlertTriangle, Loader2, Mic, MicOff, PhoneOff, Radio } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Loader2, Mic, MicOff, PhoneOff, Radio } from 'lucide-react';
 
-import { VoiceMesh, hasTurn, type VoicePeer } from '@/lib/voice';
+import { VoiceMesh, explainVoiceError, hasTurn, type VoicePeer } from '@/lib/voice';
+import { firestoreTransport } from '@/lib/voice-transport';
 import { useVoiceUi } from '@/lib/voice-store';
 import { Avatar } from '@/components/ui/Avatar';
 import { toast } from '@/lib/store';
@@ -31,6 +32,8 @@ export function VoiceRail({ room, uid }: Props) {
   const [peers, setPeers] = useState<VoicePeer[]>([]);
   const [muted, setMuted] = useState(false);
   const [selfLevel, setSelfLevel] = useState(0);
+  const [fault, setFault] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState(false);
 
   const mesh = useRef<VoiceMesh | null>(null);
   const setActive = useVoiceUi((s) => s.setActive);
@@ -43,6 +46,7 @@ export function VoiceRail({ room, uid }: Props) {
     setPeers([]);
     setMuted(false);
     setSelfLevel(0);
+    setFault(null);
     setActive(false);
     live?.stop().catch(() => {});
   }, [setActive]);
@@ -59,13 +63,19 @@ export function VoiceRail({ room, uid }: Props) {
 
   const join = async () => {
     if (state !== 'off') return;
+    setFault(null);
     setState('joining');
 
-    const live = new VoiceMesh(room.id, uid, {
+    const live = new VoiceMesh(uid, firestoreTransport(room.id, uid), {
       onPeers: setPeers,
       onSpeaking: setSomeoneSpeaking,
       onSelfLevel: setSelfLevel,
-      onError: (message) => toast(message, { tone: 'error' }),
+      onError: (message) => {
+        // Kept on screen as well as toasted: a signalling failure is the one
+        // thing that makes voice look broken for no visible reason.
+        setFault(message);
+        toast(message, { tone: 'error' });
+      },
     });
 
     try {
@@ -77,14 +87,18 @@ export function VoiceRail({ room, uid }: Props) {
       await live.stop().catch(() => {});
       setState('off');
       const name = (err as { name?: string }).name;
-      toast(
+      // Microphone problems and signalling problems have completely different
+      // remedies, so they are never collapsed into one message.
+      const message =
         name === 'NotAllowedError'
           ? 'Your browser blocked the microphone. Allow it in the address bar and try again.'
           : name === 'NotFoundError'
             ? 'No microphone found on this device'
-            : 'Could not start voice',
-        { tone: 'error' },
-      );
+            : name === 'NotReadableError'
+              ? 'Another application is holding the microphone. Close it and try again.'
+              : explainVoiceError(err as Error);
+      setFault(message);
+      toast(message, { tone: 'error' });
     }
   };
 
@@ -194,6 +208,58 @@ export function VoiceRail({ room, uid }: Props) {
           </motion.p>
         )}
       </AnimatePresence>
+
+      {/* A signalling failure is the one thing that makes voice look broken
+          for no visible reason, so it is stated plainly and stays on screen
+          with the remedy in it. */}
+      {fault && (
+        <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-flare/[0.07] px-2.5 py-2 text-[11.5px] leading-relaxed text-flare">
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+          <span>{fault}</span>
+        </p>
+      )}
+
+      {state === 'on' && peers.length > 0 && (
+        <div className="mt-2">
+          <button
+            onClick={() => setDiagnostics((v) => !v)}
+            aria-expanded={diagnostics}
+            className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.14em] text-faint transition-colors hover:text-cream-dim"
+          >
+            <ChevronDown className={cn('h-3 w-3 transition-transform duration-300', diagnostics && 'rotate-180')} />
+            Connection detail
+          </button>
+
+          <AnimatePresence>
+            {diagnostics && (
+              <motion.ul
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+                className="mt-1.5 space-y-0.5 overflow-hidden font-mono text-[10.5px] text-faint"
+              >
+                {peers.map((p) => (
+                  <li key={p.uid} className="flex items-center gap-2">
+                    <span className="w-28 truncate text-cream-dim">
+                      {room.members?.[p.uid]?.name ?? p.uid.slice(0, 8)}
+                    </span>
+                    <span className={cn(
+                      p.status === 'connected' ? 'text-mint'
+                        : p.status === 'failed' ? 'text-flare' : 'text-muted',
+                    )}>
+                      {p.status}
+                    </span>
+                    <span>{p.detail}</span>
+                    {p.attempts > 1 && <span>· try {p.attempts}</span>}
+                  </li>
+                ))}
+                <li className="pt-1">relay configured: {hasTurn ? 'yes' : 'no (STUN only)'}</li>
+              </motion.ul>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
 
       {state === 'off' && (
         <p className="mt-1.5 text-[11.5px] leading-relaxed text-faint">
