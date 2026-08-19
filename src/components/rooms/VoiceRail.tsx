@@ -2,10 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { AlertTriangle, ChevronDown, Loader2, Mic, MicOff, PhoneOff, Radio } from 'lucide-react';
+import {
+  AlertTriangle, Check, ChevronDown, Loader2, Mic, MicOff, PhoneOff, Radio, Stethoscope, X,
+} from 'lucide-react';
 
 import { VoiceMesh, explainVoiceError, hasTurn, type VoicePeer } from '@/lib/voice';
 import { firestoreTransport } from '@/lib/voice-transport';
+import { runVoiceSelfTest, type SelfTest } from '@/lib/voice-selftest';
 import { useVoiceUi } from '@/lib/voice-store';
 import { Avatar } from '@/components/ui/Avatar';
 import { toast } from '@/lib/store';
@@ -34,6 +37,8 @@ export function VoiceRail({ room, uid }: Props) {
   const [selfLevel, setSelfLevel] = useState(0);
   const [fault, setFault] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [report, setReport] = useState<SelfTest | null>(null);
 
   const mesh = useRef<VoiceMesh | null>(null);
   const setActive = useVoiceUi((s) => s.setActive);
@@ -102,6 +107,21 @@ export function VoiceRail({ room, uid }: Props) {
     }
   };
 
+  /* Three failures look identical from the outside and have three different
+     fixes. Rather than have somebody guess, this checks each one directly. */
+  const selfTest = async () => {
+    if (testing) return;
+    setTesting(true);
+    setReport(null);
+    try {
+      setReport(await runVoiceSelfTest(firestoreTransport(room.id, uid), uid));
+    } catch (err) {
+      toast((err as Error).message || 'The self-test could not run', { tone: 'error' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const toggleMute = () => {
     const next = !muted;
     setMuted(next);
@@ -149,6 +169,18 @@ export function VoiceRail({ room, uid }: Props) {
         )}
 
         <div className="ml-auto flex items-center gap-1.5">
+          {/* Available whether or not voice is running: it is just as useful
+              for "it will not start" as for "they never connect". */}
+          <button
+            onClick={selfTest}
+            disabled={testing}
+            aria-label="Check why voice is not connecting"
+            title="Check why voice is not connecting"
+            className="grid h-9 w-9 place-items-center rounded-lg text-muted transition-[background-color,color,transform] duration-200 hover:bg-cream/10 hover:text-cream active:scale-90 disabled:opacity-50"
+          >
+            {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Stethoscope className="h-4 w-4" />}
+          </button>
+
           {state === 'on' ? (
             <>
               <button
@@ -206,6 +238,58 @@ export function VoiceRail({ room, uid }: Props) {
               <span>Connecting to {connecting.length} {connecting.length === 1 ? 'person' : 'people'}…</span>
             )}
           </motion.p>
+        )}
+      </AnimatePresence>
+
+      {/* The self-test report. Ordered the way the failures have to be fixed
+          in, with the one sentence worth reading at the bottom. */}
+      <AnimatePresence>
+        {report && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+            className="mt-3 overflow-hidden"
+          >
+            <div className="rounded-xl border border-line bg-ink-850 p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="eyebrow">Self-test</p>
+                <button
+                  onClick={() => setReport(null)}
+                  aria-label="Dismiss the self-test"
+                  className="grid h-6 w-6 place-items-center rounded-md text-muted transition-colors hover:text-cream"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+
+              <ul className="space-y-1.5">
+                {[report.microphone, report.signalling, report.network].map((check) => (
+                  <li key={check.label} className="flex items-start gap-2">
+                    {check.ok
+                      ? <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-mint" />
+                      : <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-flare" />}
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[12.5px] text-cream-dim">{check.label}</span>
+                      <span className="block text-[11.5px] leading-relaxed text-faint">{check.detail}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+
+              <p className="mt-2.5 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">
+                candidates · host {report.candidates.host} · public {report.candidates.srflx} · relay {report.candidates.relay}
+              </p>
+
+              <p className="mt-2 border-t border-line pt-2 text-[12.5px] leading-relaxed text-cream">
+                {report.verdict}
+              </p>
+              {report.remedy && (
+                <p className="mt-1 font-mono text-[11px] leading-relaxed text-flare">{report.remedy}</p>
+              )}
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 

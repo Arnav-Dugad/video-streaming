@@ -65,7 +65,9 @@ const HEARTBEAT_MS = 20_000;
  *  looking at their notifications. */
 const PRESENCE_STALE_MS = 70_000;
 
-function iceServers(): RTCIceServer[] {
+/** Exported so the self-test probes exactly the servers a real call uses,
+ *  rather than a second list that could drift out of step with this one. */
+export function iceServers(): RTCIceServer[] {
   const servers: RTCIceServer[] = [
     { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
   ];
