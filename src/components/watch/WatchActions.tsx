@@ -11,6 +11,7 @@ import {
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { useRoomIdentity } from '@/hooks/useRoomIdentity';
 import {
   addToPlaylist, createPlaylist, isInCollection, isSubscribed, listPlaylists,
   toggleInCollection, toggleSubscription, createRoom,
@@ -25,6 +26,7 @@ import { useRouter } from 'next/navigation';
 export function WatchActions({ video, channel }: { video: Video; channel: Channel | null }) {
   const { user } = useAuth();
   const router = useRouter();
+  const identity = useRoomIdentity();
 
   // Offering a timestamped link only makes sense while this video is the one
   // actually playing, and only once it is far enough in to be worth pointing at.
@@ -121,7 +123,7 @@ export function WatchActions({ video, channel }: { video: Video; channel: Channe
     setBusy(true);
     try {
       const id = await createRoom(
-        { uid: user!.uid, name: user!.displayName ?? 'Host', photo: user!.photoURL },
+        { uid: user!.uid, name: identity.name, photo: identity.photo },
         video,
         undefined,
         { startAt: isCurrent ? position : 0 },

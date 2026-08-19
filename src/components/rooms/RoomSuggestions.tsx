@@ -8,6 +8,7 @@ import { Thumbnail } from '@/components/ui/Thumbnail';
 import { formatDuration } from '@/lib/format';
 import { toast } from '@/lib/store';
 import { cn } from '@/lib/cn';
+import { useRoomIdentity } from '@/hooks/useRoomIdentity';
 import type { Room, Video } from '@/lib/types';
 import type { User } from 'firebase/auth';
 
@@ -34,6 +35,7 @@ interface Suggestion {
 export function RoomSuggestions({
   room, user, isHost,
 }: { room: Room; user: User; isHost: boolean }) {
+  const identity = useRoomIdentity();
   const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
 
@@ -112,7 +114,7 @@ export function RoomSuggestions({
     try {
       const added = await addToRoomQueue(
         room.id,
-        roomQueueItem(suggestion.video, { uid: user.uid, name: user.displayName ?? 'Viewer' }),
+        roomQueueItem(suggestion.video, { uid: user.uid, name: identity.name }),
       );
       toast(added ? 'Added to the room queue' : 'That is already queued', {
         tone: added ? 'success' : 'neutral',

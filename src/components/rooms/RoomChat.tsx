@@ -8,6 +8,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { sendRoomMessage, watchRoomMessages } from '@/lib/db';
 import { formatDuration, timeAgo } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { useRoomIdentity } from '@/hooks/useRoomIdentity';
 import type { RoomMessage } from '@/lib/types';
 import type { User } from 'firebase/auth';
 
@@ -17,6 +18,7 @@ import type { User } from 'firebase/auth';
 export function RoomChat({
   roomId, user, currentSecond,
 }: { roomId: string; user: User; currentSecond: number }) {
+  const identity = useRoomIdentity();
   const [messages, setMessages] = useState<RoomMessage[]>([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -40,7 +42,7 @@ export function RoomChat({
     try {
       await sendRoomMessage(roomId, {
         uid: user.uid,
-        name: user.displayName ?? 'Viewer',
+        name: identity.name,
         photo: user.photoURL,
         text: body.slice(0, 500),
         atSecond: Math.floor(currentSecond),

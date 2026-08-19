@@ -73,6 +73,9 @@ export interface UserProfile {
   displayName: string;
   photoURL: string | null;
   handle: string;
+  /** What to call you in watch parties, when that should differ from the name
+   *  on the rest of your account. Falls back to `displayName` when unset. */
+  roomName?: string;
   bio?: string;
   createdAt: number;
   /** Taste vector seeded at onboarding, refined by watch behaviour. */
@@ -214,11 +217,29 @@ export interface Room {
   hostControls?: boolean;
   /** Members currently buffering, so the room can wait for them. */
   buffering?: string[];
+  /** Set when the host closes the room. A closed room is not deleted — it
+   *  keeps its member list, its chat and its reaction record, so the people
+   *  who were in it can come back and see what they watched. */
+  closedAt?: number;
+  /** Everything this room has finished with, oldest first. Written when the
+   *  video changes, so it is the room's own record rather than anyone's
+   *  personal history. */
+  watched?: WatchedItem[];
   createdAt: number;
   members: Record<string, RoomMember>;
   /** Host-managed up-next list. Denormalised so the queue renders for guests
    *  without a second read per entry. */
   queue?: RoomQueueItem[];
+}
+
+export interface WatchedItem {
+  videoId: string;
+  title: string;
+  thumbnail: string;
+  /** When the room moved on from it. */
+  at: number;
+  /** Seconds of it the room actually got through. */
+  seconds: number;
 }
 
 export interface RoomMember {

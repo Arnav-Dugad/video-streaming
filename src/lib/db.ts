@@ -1,7 +1,7 @@
 'use client';
 
 import {
-  addDoc, arrayRemove, arrayUnion, collection, deleteDoc, doc, getDoc, getDocs,
+  addDoc, arrayRemove, arrayUnion, collection, deleteDoc, deleteField, doc, getDoc, getDocs,
   limit as qLimit, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc,
   where, writeBatch, type Unsubscribe,
 } from 'firebase/firestore';
@@ -10,7 +10,7 @@ import { db } from './firebase';
 import type {
   Friend, HandleEntry, HistoryEntry, Playlist, Preferences, Room, RoomMessage,
   RoomQueueItem, RoomReaction, SavedVideo, SmartPlaylist, SmartRule,
-  UserProfile, Video,
+  UserProfile, Video, WatchedItem,
 } from './types';
 import { serverClock } from './server-clock';
 
@@ -80,6 +80,7 @@ export async function ensureProfile(
       displayName: data.displayName || seed.displayName,
       photoURL: data.photoURL ?? seed.photoURL,
       handle: data.handle || handleFrom(seed.displayName, uid),
+      roomName: data.roomName ?? '',
       bio: data.bio ?? '',
       createdAt: data.createdAt ?? Date.now(),
       interests: data.interests ?? [],
@@ -98,6 +99,7 @@ export async function ensureProfile(
     displayName: seed.displayName || 'Viewer',
     photoURL: seed.photoURL,
     handle: handleFrom(seed.displayName, uid),
+    roomName: '',
     bio: '',
     createdAt: Date.now(),
     interests: [],
@@ -509,6 +511,7 @@ export async function createRoom(
     createdAt: Date.now(),
     hostControls: true,
     buffering: [],
+    watched: [],
     members: {
       [host.uid]: { name: host.name, photo: host.photo, joinedAt: Date.now() },
     },
@@ -516,8 +519,49 @@ export async function createRoom(
   return ref.id;
 }
 
+/* Closing a room used to delete it, which threw away the only record that the
+   evening had happened — who was there, what you got through, where everybody
+   laughed. A closed room keeps all of that and simply stops being live. */
+export async function closeRoom(roomId: string): Promise<void> {
+  await updateDoc(doc(store(), 'rooms', roomId), {
+    closedAt: Date.now(),
+    playing: false,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function reopenRoom(roomId: string): Promise<void> {
+  await updateDoc(doc(store(), 'rooms', roomId), {
+    closedAt: deleteField(),
+    positionSeconds: 0,
+    playing: false,
+    positionAtServerMs: serverClock(roomId).now(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Permanent. Offered separately from closing, and only to the host. */
 export async function deleteRoom(roomId: string): Promise<void> {
   await deleteDoc(doc(store(), 'rooms', roomId));
+}
+
+/** Records the video a room is leaving behind, before it moves on. */
+function watchedEntry(data: Record<string, unknown>, seconds: number): WatchedItem[] {
+  const log = (data.watched as WatchedItem[] | undefined) ?? [];
+  const videoId = String(data.videoId ?? '');
+  if (!videoId) return log;
+
+  const entry: WatchedItem = {
+    videoId,
+    title: String(data.videoTitle ?? ''),
+    thumbnail: String(data.videoThumbnail ?? ''),
+    at: Date.now(),
+    seconds: Math.max(0, Math.round(seconds)),
+  };
+
+  // Re-watching something replaces its entry rather than adding a second one;
+  // the log is meant to read as "what we watched", not as an event stream.
+  return [...log.filter((w) => w.videoId !== videoId), entry].slice(-60);
 }
 
 export async function listMyRooms(uid: string): Promise<Room[]> {
@@ -657,8 +701,13 @@ export async function sendReaction(
   await addDoc(collection(store(), 'rooms', roomId, 'reactions'), { ...reaction, at: Date.now() });
 }
 
-export async function setRoomVideo(roomId: string, video: Video): Promise<void> {
-  await updateDoc(doc(store(), 'rooms', roomId), {
+export async function setRoomVideo(roomId: string, video: Video, leavingAt = 0): Promise<void> {
+  const ref = doc(store(), 'rooms', roomId);
+  const snap = await getDoc(ref);
+  const watched = snap.exists() ? watchedEntry(snap.data(), leavingAt) : [];
+
+  await updateDoc(ref, {
+    watched,
     videoId: video.id,
     videoTitle: video.title,
     videoThumbnail: video.thumbnailHq || video.thumbnail,
@@ -723,6 +772,8 @@ export async function advanceRoomQueue(roomId: string): Promise<RoomQueueItem | 
   if (!next) return null;
 
   await updateDoc(ref, {
+    // Reaching the end is the one case where the room definitely saw all of it.
+    watched: watchedEntry(snap.data(), Number(snap.data().positionSeconds) || 0),
     videoId: next.videoId,
     videoTitle: next.title,
     videoThumbnail: next.thumbnail,
@@ -735,10 +786,14 @@ export async function advanceRoomQueue(roomId: string): Promise<RoomQueueItem | 
   return next;
 }
 
+/* Closed rooms are filtered here rather than in the query. A `where` on a
+   field that older documents do not carry at all would drop them from the
+   index and make them vanish, and over-fetching a handful of rows is cheaper
+   than a migration. */
 export async function listPublicRooms(max = 24): Promise<Room[]> {
-  const q = query(collection(store(), 'rooms'), orderBy('updatedAt', 'desc'), qLimit(max));
+  const q = query(collection(store(), 'rooms'), orderBy('updatedAt', 'desc'), qLimit(max * 3));
   const snap = await getDocs(q);
-  return snap.docs.map((d) => toRoom(d.id, d.data()));
+  return snap.docs.map((d) => toRoom(d.id, d.data())).filter((r) => !r.closedAt).slice(0, max);
 }
 
 export function watchRoomMessages(roomId: string, onChange: (msgs: RoomMessage[]) => void): Unsubscribe {

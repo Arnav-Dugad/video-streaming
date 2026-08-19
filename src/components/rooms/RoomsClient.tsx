@@ -7,8 +7,9 @@ import { AnimatePresence, motion } from 'motion/react';
 import { ArrowRight, DoorOpen, Loader2, Plus, Trash2, Users } from 'lucide-react';
 
 import { useAuth } from '@/components/providers/AuthProvider';
+import { useRoomIdentity } from '@/hooks/useRoomIdentity';
 import { isFirebaseConfigured } from '@/lib/firebase';
-import { createRoom, deleteRoom, findRoomByCode, listMyRooms, listPublicRooms } from '@/lib/db';
+import { closeRoom, createRoom, deleteRoom, findRoomByCode, listMyRooms, listPublicRooms } from '@/lib/db';
 import { RoomInvites } from './RoomInvites';
 import { FriendsPanel } from './FriendsPanel';
 import { PageHeader, EmptyState } from '@/components/ui/PageHeader';
@@ -23,6 +24,7 @@ import type { Room, Video } from '@/lib/types';
 
 export function RoomsClient() {
   const { user, profile, configured } = useAuth();
+  const identity = useRoomIdentity();
   const router = useRouter();
 
   const [rooms, setRooms] = useState<Room[] | null>(isFirebaseConfigured ? null : []);
@@ -45,26 +47,42 @@ export function RoomsClient() {
     listMyRooms(user.uid).then(setMine).catch(() => setMine([]));
   }, [configured, user]);
 
-  /** Closing a room evicts everybody in it, so it takes two clicks — the
+  const refreshMine = () => {
+    if (user) listMyRooms(user.uid).then(setMine).catch(() => {});
+  };
+
+  /** Closing sends everybody home but keeps the record, so it needs no
+   *  confirmation — it is undoable from the room's own page. */
+  const close = async (room: Room) => {
+    setMine((prev) => prev?.map((r) => (r.id === room.id ? { ...r, closedAt: Date.now() } : r)) ?? null);
+    setRooms((prev) => prev?.filter((r) => r.id !== room.id) ?? null);
+    try {
+      await closeRoom(room.id);
+      toast('Room closed — the recap is kept');
+    } catch {
+      toast('Could not close that room', { tone: 'error' });
+      refreshMine();
+    }
+  };
+
+  /** Deleting is the one that cannot be undone, so it takes two clicks — the
    *  button becomes its own confirmation rather than throwing up a dialog,
    *  and forgetting about it disarms after four seconds. */
-  const close = async (room: Room) => {
+  const remove = async (room: Room) => {
     if (armed !== room.id) {
       setArmed(room.id);
       window.setTimeout(() => setArmed((cur) => (cur === room.id ? null : cur)), 4000);
       return;
     }
     setArmed(null);
-    // Optimistic on both lists: a deleted document will not come back from a
-    // re-read either way.
+    // Optimistic: a deleted document will not come back from a re-read either.
     setMine((prev) => prev?.filter((r) => r.id !== room.id) ?? null);
-    setRooms((prev) => prev?.filter((r) => r.id !== room.id) ?? null);
     try {
       await deleteRoom(room.id);
-      toast('Room closed');
+      toast('Room deleted');
     } catch {
-      toast('Could not close that room', { tone: 'error' });
-      if (user) listMyRooms(user.uid).then(setMine).catch(() => {});
+      toast('Could not delete that room', { tone: 'error' });
+      refreshMine();
     }
   };
 
@@ -97,7 +115,7 @@ export function RoomsClient() {
       if (!video) { toast('Could not find that video', { tone: 'error' }); return; }
 
       const roomId = await createRoom(
-        { uid: user.uid, name: user.displayName ?? 'Host', photo: user.photoURL },
+        { uid: user.uid, name: identity.name, photo: identity.photo },
         video,
       );
       router.push(`/rooms/${roomId}`);
@@ -107,6 +125,9 @@ export function RoomsClient() {
       setCreating(false);
     }
   };
+
+  const open = mine?.filter((r) => !r.closedAt) ?? [];
+  const closed = mine?.filter((r) => r.closedAt) ?? [];
 
   return (
     <>
@@ -187,57 +208,35 @@ export function RoomsClient() {
                 <div className="grid place-items-center py-8"><Loader2 className="h-4 w-4 animate-spin text-flare" /></div>
               )}
 
-              {mine?.length === 0 && (
+              {mine !== null && open.length === 0 && (
                 <p className="mt-3 rounded-xl border border-dashed border-line px-3.5 py-4 text-[12.5px] leading-relaxed text-muted">
-                  You haven’t opened one yet. Rooms you host stay here so you can
-                  hand the link out again — or close them for good.
+                  Nothing open right now. Rooms you host stay here so you can hand
+                  the link out again, and closing one keeps its recap rather than
+                  throwing the evening away.
                 </p>
               )}
 
-              <ul className="mt-2 space-y-1">
-                <AnimatePresence initial={false}>
-                  {mine?.map((room) => (
-                    <motion.li
-                      key={room.id}
-                      layout
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, x: 12, height: 0, marginTop: 0 }}
-                      transition={{ duration: 0.34, ease: [0.16, 1, 0.3, 1] }}
-                      className="group flex items-center gap-3 rounded-xl px-1.5 py-1.5 transition-colors hover:bg-cream/[0.04]"
-                    >
-                      <Link href={`/rooms/${room.id}`} className="flex min-w-0 flex-1 items-center gap-3">
-                        <div className="relative aspect-video w-20 shrink-0 overflow-hidden rounded-lg bg-ink-800">
-                          <Thumbnail src={room.videoThumbnail} alt="" sizes="80px" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="clamp-1 text-[13px] text-cream-dim">{room.videoTitle}</p>
-                          <p className="mt-0.5 flex items-center gap-2 font-mono text-[10.5px] text-faint">
-                            <span className="tracking-[0.16em] text-muted">{room.code}</span>
-                            <span>·</span>
-                            <span>{Object.keys(room.members ?? {}).length} in</span>
-                            <span>·</span>
-                            <span>{timeAgo(room.updatedAt)}</span>
-                          </p>
-                        </div>
-                      </Link>
+              <RoomRows
+                rooms={open}
+                armed={armed}
+                onAct={close}
+                actionLabel="Close"
+                actionIcon={<DoorOpen className="h-4 w-4" />}
+              />
 
-                      <button
-                        onClick={() => close(room)}
-                        aria-label={armed === room.id ? `Confirm closing ${room.title}` : `Close ${room.title}`}
-                        className={cn(
-                          'shrink-0 rounded-lg px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] transition-[background-color,color,opacity,transform] duration-200 active:scale-95',
-                          armed === room.id
-                            ? 'bg-flare/15 text-flare opacity-100'
-                            : 'text-muted opacity-0 hover:bg-cream/10 hover:text-cream focus-visible:opacity-100 group-hover:opacity-100',
-                        )}
-                      >
-                        {armed === room.id ? 'Sure?' : <Trash2 className="h-4 w-4" />}
-                      </button>
-                    </motion.li>
-                  ))}
-                </AnimatePresence>
-              </ul>
+              {closed.length > 0 && (
+                <>
+                  <p className="eyebrow mt-5 mb-1">Watched together</p>
+                  <RoomRows
+                    rooms={closed}
+                    armed={armed}
+                    onAct={remove}
+                    actionLabel="Delete"
+                    actionIcon={<Trash2 className="h-4 w-4" />}
+                    dim
+                  />
+                </>
+              )}
             </div>
 
             {profile && <FriendsPanel profile={profile} />}
@@ -325,5 +324,80 @@ export function RoomsClient() {
         )}
       </section>
     </>
+  );
+}
+
+/* ==========================================================================
+   One list, two meanings.
+
+   Open rooms and closed ones want the same row — thumbnail, code, who was in
+   it, when — and differ only in the destructive action on the end. Closing is
+   reversible and needs no confirmation; deleting is not, so its button becomes
+   its own confirmation for four seconds rather than raising a dialog.
+   ========================================================================== */
+
+function RoomRows({
+  rooms, armed, onAct, actionLabel, actionIcon, dim,
+}: {
+  rooms: Room[];
+  armed: string | null;
+  onAct(room: Room): void;
+  actionLabel: string;
+  actionIcon: React.ReactNode;
+  dim?: boolean;
+}) {
+  return (
+    <ul className="mt-2 space-y-1">
+      <AnimatePresence initial={false}>
+        {rooms.map((room) => (
+          <motion.li
+            key={room.id}
+            layout
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, x: 12, height: 0, marginTop: 0 }}
+            transition={{ duration: 0.34, ease: [0.16, 1, 0.3, 1] }}
+            className="group flex items-center gap-3 rounded-xl px-1.5 py-1.5 transition-colors hover:bg-cream/[0.04]"
+          >
+            <Link href={`/rooms/${room.id}`} className="flex min-w-0 flex-1 items-center gap-3">
+              <div className={cn(
+                'relative aspect-video w-20 shrink-0 overflow-hidden rounded-lg bg-ink-800 transition-opacity',
+                dim && 'opacity-60 group-hover:opacity-100',
+              )}>
+                <Thumbnail src={room.videoThumbnail} alt="" sizes="80px" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="clamp-1 text-[13px] text-cream-dim">{room.videoTitle}</p>
+                <p className="mt-0.5 flex flex-wrap items-center gap-x-2 font-mono text-[10.5px] text-faint">
+                  <span className="tracking-[0.16em] text-muted">{room.code}</span>
+                  <span>·</span>
+                  <span>{Object.keys(room.members ?? {}).length} in</span>
+                  <span>·</span>
+                  {room.closedAt ? (
+                    <span>{(room.watched?.length ?? 0) + 1} watched</span>
+                  ) : (
+                    <span>{timeAgo(room.updatedAt)}</span>
+                  )}
+                </p>
+              </div>
+            </Link>
+
+            <button
+              onClick={() => onAct(room)}
+              aria-label={armed === room.id ? `Confirm: ${actionLabel} ${room.title}` : `${actionLabel} ${room.title}`}
+              title={`${actionLabel} ${room.title}`}
+              className={cn(
+                'shrink-0 rounded-lg px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] transition-[background-color,color,opacity,transform] duration-200 active:scale-95',
+                armed === room.id
+                  ? 'bg-flare/15 text-flare opacity-100'
+                  : 'text-muted opacity-0 hover:bg-cream/10 hover:text-cream focus-visible:opacity-100 group-hover:opacity-100',
+              )}
+            >
+              {armed === room.id ? 'Sure?' : actionIcon}
+            </button>
+          </motion.li>
+        ))}
+      </AnimatePresence>
+    </ul>
   );
 }

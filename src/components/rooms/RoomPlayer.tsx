@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Pause, Play, RotateCcw, RotateCw } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
+import { Loader2, Pause, Play, Radio, RotateCcw, RotateCw, SkipBack } from 'lucide-react';
 
 import { loadYouTubeApi, PlayerState, type YTPlayer } from '@/hooks/useYouTubeApi';
 import { advanceRoomQueue, setBuffering, syncRoomPlayback } from '@/lib/db';
@@ -58,6 +59,10 @@ const SEEK_LEAD = 0.2;
 const HEARTBEAT_MS = 3000;
 /** How long a stall must last before the room is told about it. */
 const STALL_MS = 900;
+/* Far enough in that arriving means missing something. Below this, catching up
+   is a two-second scrub and offering a choice would just be a dialog in the
+   way. */
+const CATCHUP_THRESHOLD = 90;
 
 /* The embed picks its rendition from the size of its *own* window, not from
    how large it looks on screen — so a 900px-wide iframe is never offered more
@@ -79,15 +84,29 @@ export function RoomPlayer({ room, isHost, uid, name }: Props) {
   /** Host controls default to on — a watch party where everyone sits at a
    *  different second is just several people watching alone. */
   const synced = room.hostControls !== false;
-  const follows = synced && !isHost;
+
+  /* Which lane this viewer is in.
+   *
+   *  'live' is the room. 'solo' is the private lane a late arrival can take:
+   *  they watch from the top at their own pace, with the room carrying on
+   *  without them, and rejoin when they are ready. Dropping somebody forty
+   *  minutes into something they have not seen is the standing failure of
+   *  every watch-party feature, and "you had to be here on time" is not an
+   *  answer. */
+  const [lane, setLane] = useState<'live' | 'solo'>('live');
+  /** Shown once, on arrival, when there is enough behind us to be worth it. */
+  const [offer, setOffer] = useState(false);
+  const offered = useRef(false);
+
+  const follows = synced && !isHost && lane === 'live';
 
   // The player's event handlers are bound once at construction, so they close
   // over whatever these were then. Mirroring into a ref keeps them current
   // without rebuilding the player on every prop change.
-  const context = useRef({ isHost, roomId: room.id, uid, synced });
+  const context = useRef({ isHost, roomId: room.id, uid, synced, follows });
   useEffect(() => {
-    context.current = { isHost, roomId: room.id, uid, synced };
-  }, [isHost, room.id, uid, synced]);
+    context.current = { isHost, roomId: room.id, uid, synced, follows };
+  }, [isHost, room.id, uid, synced, follows]);
 
   const onEnded = useCallback(() => {
     if (!context.current.isHost) return;
@@ -138,8 +157,10 @@ export function RoomPlayer({ room, isHost, uid, name }: Props) {
    *  worth waiting for. Short hitches are filtered out — announcing every
    *  200ms rebuffer would flap the room document and pause everybody. */
   const announceStall = useCallback((stalled: boolean) => {
-    const { roomId, uid: me, synced: on } = context.current;
-    if (!on) return;
+    const { roomId, uid: me, synced: on, follows: inLane, isHost: host } = context.current;
+    // Only somebody the room is actually waiting for should say so: a viewer
+    // in their own lane, or a room with sync off, holds nobody up.
+    if (!on || (!inLane && !host)) return;
 
     if (stallTimer.current) { clearTimeout(stallTimer.current); stallTimer.current = null; }
 
@@ -247,6 +268,43 @@ export function RoomPlayer({ room, isHost, uid, name }: Props) {
     }, 250);
     return () => clearInterval(id);
   }, [follows, room.playing, projected]);
+
+  /* --------------------------- late arrivals ---------------------------- */
+
+  useEffect(() => {
+    if (offered.current || !ready || isHost || !synced) return;
+    if (!room.playing) return;
+    if (projected() < CATCHUP_THRESHOLD) return;
+    offered.current = true;
+    // Deferred: this reacts to the room's state arriving, not to a render
+    // input, and a synchronous setState here would cascade a second pass.
+    queueMicrotask(() => setOffer(true));
+  }, [ready, isHost, synced, room.playing, projected]);
+
+  const joinLive = useCallback(() => {
+    setOffer(false);
+    setLane('live');
+    const p = playerRef.current;
+    if (!p) return;
+    try {
+      p.seekTo(projected() + SEEK_LEAD, true);
+      settleUntil.current = Date.now() + SETTLE_MS;
+      if (room.playing) p.playVideo();
+    } catch { /* the follow effect will correct it */ }
+  }, [projected, room.playing]);
+
+  const startOver = useCallback(() => {
+    setOffer(false);
+    setLane('solo');
+    const p = playerRef.current;
+    if (!p) return;
+    try {
+      if (trimming.current) { p.setPlaybackRate(1); trimming.current = false; }
+      p.seekTo(0, true);
+      settleUntil.current = Date.now() + SETTLE_MS;
+      p.playVideo();
+    } catch { /* nothing else to do */ }
+  }, []);
 
   /* ------------------------- host: publish state ------------------------ */
 
@@ -404,7 +462,9 @@ export function RoomPlayer({ room, isHost, uid, name }: Props) {
 
   /* ------------------------------ controls ------------------------------ */
 
-  const canDrive = isHost || !synced;
+  // A viewer in their own lane drives their own player — nothing they do
+  // reaches the room, because only the host ever publishes.
+  const canDrive = isHost || !synced || lane === 'solo';
 
   const toggle = () => {
     const p = playerRef.current;
@@ -493,6 +553,78 @@ export function RoomPlayer({ room, isHost, uid, name }: Props) {
           </div>
         )}
 
+        {/* Arriving late. Offered rather than decided: some people would
+            rather see the end with everyone than the beginning alone. */}
+        <AnimatePresence>
+          {offer && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+              className="absolute inset-0 z-20 grid place-items-center bg-ink-950/85 p-6 backdrop-blur-sm"
+            >
+              <motion.div
+                initial={{ y: 14, scale: 0.97 }}
+                animate={{ y: 0, scale: 1 }}
+                transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+                className="w-full max-w-sm text-center"
+              >
+                <p className="eyebrow">You are arriving late</p>
+                <h3 className="mt-2 text-[17px] font-medium leading-snug text-cream">
+                  The room is {formatDuration(projected())} in
+                </h3>
+                <p className="mt-2 text-[13px] leading-relaxed text-muted">
+                  Catch up with everyone, or start from the top on your own and
+                  rejoin whenever you like.
+                </p>
+                <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-center">
+                  <button
+                    onClick={joinLive}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-flare px-4 text-[13px] font-medium text-white transition-transform duration-200 active:scale-95"
+                  >
+                    <Radio className="h-4 w-4" /> Join the room
+                  </button>
+                  <button
+                    onClick={startOver}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-line px-4 text-[13px] text-cream-dim transition-[border-color,background-color] hover:border-line-strong hover:bg-cream/[0.05]"
+                  >
+                    <SkipBack className="h-4 w-4" /> Start from the beginning
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* In your own lane: a standing reminder that the room is elsewhere,
+            and one tap back to it. */}
+        {lane === 'solo' && !offer && (
+          <div className="absolute inset-x-0 top-0 flex justify-center p-3">
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+              className="flex items-center gap-2.5 rounded-full border border-line bg-ink-950/85 py-1 pl-3 pr-1 backdrop-blur-sm"
+            >
+              <span className="text-[11.5px] text-cream-dim">
+                Watching on your own
+                {room.playing && projected() > position + 5 && (
+                  <span className="ml-1.5 font-mono text-[10.5px] text-faint tnum">
+                    {formatDuration(Math.max(0, projected() - position))} behind
+                  </span>
+                )}
+              </span>
+              <button
+                onClick={joinLive}
+                className="rounded-full bg-flare/15 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-flare transition-colors hover:bg-flare/25"
+              >
+                Rejoin
+              </button>
+            </motion.div>
+          </div>
+        )}
+
         <RoomReactions
           roomId={room.id}
           uid={uid}
@@ -575,7 +707,9 @@ export function RoomPlayer({ room, isHost, uid, name }: Props) {
               </>
             ) : (
               <span className="text-faint">
-                {isHost ? (synced ? 'You are the host' : 'Host · free play') : 'Free play'}
+                {isHost
+                  ? (synced ? 'You are the host' : 'Host · free play')
+                  : lane === 'solo' ? 'Your own lane' : 'Free play'}
               </span>
             )}
           </span>

@@ -105,6 +105,7 @@ function ProfileForm({ profile, uid }: { profile: UserProfile; uid: string }) {
   const prefs = usePreferences();
 
   const [name, setName] = useState(profile.displayName);
+  const [roomName, setRoomName] = useState(profile.roomName ?? '');
   const [bio, setBio] = useState(profile.bio ?? '');
   const [interests, setInterests] = useState<string[]>(profile.interests ?? []);
   const [saving, setSaving] = useState(false);
@@ -112,13 +113,19 @@ function ProfileForm({ profile, uid }: { profile: UserProfile; uid: string }) {
 
   const dirty =
     name !== profile.displayName ||
+    roomName !== (profile.roomName ?? '') ||
     bio !== (profile.bio ?? '') ||
     interests.join() !== (profile.interests ?? []).join();
 
   const save = async () => {
     setSaving(true);
     try {
-      await updateProfile(uid, { displayName: name.trim() || 'Viewer', bio: bio.trim(), interests });
+      await updateProfile(uid, {
+        displayName: name.trim() || 'Viewer',
+        roomName: roomName.trim(),
+        bio: bio.trim(),
+        interests,
+      });
       await refreshProfile();
       setSaved(true);
       setTimeout(() => setSaved(false), 2200);
@@ -164,6 +171,24 @@ function ProfileForm({ profile, uid }: { profile: UserProfile; uid: string }) {
                 maxLength={60}
                 className="h-11 w-full max-w-sm rounded-xl border border-line bg-ink-850 px-3.5 text-[14px] text-cream outline-none transition-colors focus:border-flare/60"
               />
+            </label>
+
+            <label className="mt-5 block">
+              <span className="mb-1.5 block font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
+                Name in watch parties
+              </span>
+              <input
+                value={roomName}
+                onChange={(e) => setRoomName(e.target.value)}
+                maxLength={40}
+                placeholder={name.trim() || 'Viewer'}
+                aria-describedby="room-name-help"
+                className="h-11 w-full max-w-sm rounded-xl border border-line bg-ink-850 px-3.5 text-[14px] text-cream outline-none transition-colors placeholder:text-faint focus:border-flare/60"
+              />
+              <span id="room-name-help" className="mt-1.5 block text-[12px] leading-relaxed text-muted">
+                What the room calls you — in chat, on the member list and next to your
+                reactions. Leave it empty to use your display name.
+              </span>
             </label>
 
             <label className="mt-5 block">
@@ -377,6 +402,7 @@ function ProfileForm({ profile, uid }: { profile: UserProfile; uid: string }) {
               size="sm"
               onClick={() => {
                 setName(profile.displayName);
+                setRoomName(profile.roomName ?? '');
                 setBio(profile.bio ?? '');
                 setInterests(profile.interests ?? []);
               }}

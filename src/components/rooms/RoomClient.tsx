@@ -5,18 +5,21 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  ArrowLeft, Check, Copy, Crown, DoorOpen, Loader2, Radio, Trash2, UserPlus, Users,
+  ArrowLeft, Crown, DoorOpen, Loader2, QrCode, Radio, Trash2, UserPlus, Users,
 } from 'lucide-react';
 
 import { useAuth } from '@/components/providers/AuthProvider';
+import { useRoomIdentity } from '@/hooks/useRoomIdentity';
 import { isFirebaseConfigured } from '@/lib/firebase';
-import { deleteRoom, joinRoom, leaveRoom, setHostControls, tasteSignal, watchRoom } from '@/lib/db';
+import { closeRoom, joinRoom, leaveRoom, setHostControls, tasteSignal, watchRoom } from '@/lib/db';
 import { releaseClock } from '@/lib/server-clock';
 import { RoomPlayer } from './RoomPlayer';
 import { RoomChat } from './RoomChat';
 import { RoomQueue } from './RoomQueue';
 import { RoomSuggestions } from './RoomSuggestions';
 import { FriendsPanel } from './FriendsPanel';
+import { RoomQr } from './RoomQr';
+import { RoomRecap } from './RoomRecap';
 import { Avatar } from '@/components/ui/Avatar';
 import { ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/PageHeader';
@@ -26,13 +29,14 @@ import type { Room } from '@/lib/types';
 
 export function RoomClient({ roomId }: { roomId: string }) {
   const { user, profile, loading, configured } = useAuth();
+  const identity = useRoomIdentity();
   const router = useRouter();
   // `undefined` means "still loading"; `null` means "no such room".
   const [room, setRoom] = useState<Room | null | undefined>(
     isFirebaseConfigured ? undefined : null,
   );
-  const [copied, setCopied] = useState(false);
   const [inviting, setInviting] = useState(false);
+  const [showCode, setShowCode] = useState(false);
 
   /* The app-wide player follows you across navigations by design — it docks
      into the corner and keeps going. That is exactly wrong here: arriving in a
@@ -55,7 +59,9 @@ export function RoomClient({ roomId }: { roomId: string }) {
   // so the room can find common ground without anyone's history being shared.
   useEffect(() => {
     if (!user || !room) return;
-    if (room.members?.[user.uid]) return;
+    // Also re-runs when the viewer renames themselves in settings, so the
+    // member list, chat and reactions all catch up without a rejoin.
+    if (room.members?.[user.uid]?.name === identity.name) return;
 
     let alive = true;
     tasteSignal(user.uid)
@@ -64,15 +70,15 @@ export function RoomClient({ roomId }: { roomId: string }) {
         if (!alive) return;
         return joinRoom(roomId, {
           uid: user.uid,
-          name: user.displayName ?? 'Viewer',
-          photo: user.photoURL,
+          name: identity.name,
+          photo: identity.photo,
           taste,
         });
       })
       .catch(() => toast('Could not join this room', { tone: 'error' }));
 
     return () => { alive = false; };
-  }, [user, room, roomId]);
+  }, [user, room, roomId, identity.name, identity.photo]);
 
   if (!configured) {
     return (
@@ -120,17 +126,15 @@ export function RoomClient({ roomId }: { roomId: string }) {
     );
   }
 
+  // A closed room is a record, not a player.
+  if (room.closedAt) return <RoomRecap room={room} roomId={roomId} user={user} />;
+
   const isHost = room.hostUid === user.uid;
   const synced = room.hostControls !== false;
+  const joinUrl = typeof window === 'undefined'
+    ? `/rooms/${roomId}`
+    : `${window.location.origin}/rooms/${roomId}`;
   const members = Object.entries(room.members ?? {});
-
-  const copyCode = async () => {
-    try {
-      await navigator.clipboard.writeText(room.code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch { toast('Could not copy the code', { tone: 'error' }); }
-  };
 
   const toggleControls = async () => {
     try {
@@ -144,12 +148,14 @@ export function RoomClient({ roomId }: { roomId: string }) {
     router.push('/rooms');
   };
 
+  /* Closing does not delete. The room keeps its member list, its chat and
+     what it got through, and the host can open it again — which is what makes
+     "same time next week" a link rather than a new room. */
   const close = async () => {
     try {
-      await deleteRoom(roomId);
-      toast('Room closed');
+      await closeRoom(roomId);
+      toast('Room closed — the recap is kept');
     } catch { toast('Could not close the room', { tone: 'error' }); }
-    router.push('/rooms');
   };
 
   return (
@@ -168,7 +174,7 @@ export function RoomClient({ roomId }: { roomId: string }) {
             room={room}
             isHost={isHost}
             uid={user.uid}
-            name={user.displayName ?? 'Viewer'}
+            name={identity.name}
           />
 
           <div className="mt-5 flex flex-wrap items-start justify-between gap-4">
@@ -184,12 +190,30 @@ export function RoomClient({ roomId }: { roomId: string }) {
             <div className="relative flex shrink-0 items-center gap-2">
               <motion.button
                 whileTap={{ scale: 0.95 }}
-                onClick={copyCode}
+                onClick={() => setShowCode((v) => !v)}
+                aria-expanded={showCode}
                 className="inline-flex h-10 items-center gap-2.5 rounded-xl border border-line px-3.5 transition-[border-color,background-color] hover:border-line-strong hover:bg-cream/[0.04]"
               >
                 <span className="font-mono text-[15px] font-semibold tracking-[0.2em] text-cream">{room.code}</span>
-                {copied ? <Check className="h-3.5 w-3.5 text-mint" /> : <Copy className="h-3.5 w-3.5 text-muted" />}
+                <QrCode className="h-3.5 w-3.5 text-muted" />
               </motion.button>
+
+              <AnimatePresence>
+                {showCode && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowCode(false)} aria-hidden />
+                    <motion.div
+                      initial={{ opacity: 0, y: -8, scale: 0.97 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -8, scale: 0.97 }}
+                      transition={{ duration: 0.34, ease: [0.16, 1, 0.3, 1] }}
+                      className="absolute right-0 top-12 z-50 origin-top-right rounded-2xl border border-line bg-ink-900 p-4 shadow-[0_28px_70px_-24px_rgba(0,0,0,0.9)]"
+                    >
+                      <RoomQr url={joinUrl} code={room.code} />
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
 
               {profile && (
                 <button

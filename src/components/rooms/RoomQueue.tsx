@@ -10,6 +10,7 @@ import { formatDuration } from '@/lib/format';
 import { extractVideoId } from '@/lib/video-id';
 import { toast } from '@/lib/store';
 import { cn } from '@/lib/cn';
+import { useRoomIdentity } from '@/hooks/useRoomIdentity';
 import type { Room, Video } from '@/lib/types';
 import type { User } from 'firebase/auth';
 
@@ -22,6 +23,7 @@ import type { User } from 'firebase/auth';
    ========================================================================== */
 
 export function RoomQueue({ room, user, isHost }: { room: Room; user: User; isHost: boolean }) {
+  const identity = useRoomIdentity();
   const [url, setUrl] = useState('');
   const [adding, setAdding] = useState(false);
 
@@ -40,7 +42,7 @@ export function RoomQueue({ room, user, isHost }: { room: Room; user: User; isHo
 
       const added = await addToRoomQueue(
         room.id,
-        roomQueueItem(video, { uid: user.uid, name: user.displayName ?? 'Viewer' }),
+        roomQueueItem(video, { uid: user.uid, name: identity.name }),
       );
       if (added) { setUrl(''); toast(`Queued “${video.title.slice(0, 40)}”`, { tone: 'success' }); }
       else toast('That is already queued', { tone: 'neutral' });
