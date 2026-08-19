@@ -318,6 +318,23 @@
   border-radius: 0 !important;
 }
 
+/* The room player is a card: a stage with a control bar bolted underneath.
+   Fullscreen has to give the stage every pixel the bar does not take, which a
+   fixed 16:9 aspect ratio cannot do — the screen is rarely 16:9. The surface
+   inside letterboxes itself against whatever shape it ends up with. */
+.room-player:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border: 0;
+  border-radius: 0;
+}
+
+.room-player:fullscreen .room-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  aspect-ratio: auto;
+}
+
 /* ==========================================================================
    View transitions
 

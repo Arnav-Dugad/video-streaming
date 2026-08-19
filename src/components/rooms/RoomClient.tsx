@@ -20,7 +20,7 @@ import { FriendsPanel } from './FriendsPanel';
 import { Avatar } from '@/components/ui/Avatar';
 import { ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/PageHeader';
-import { toast } from '@/lib/store';
+import { toast, usePlayer } from '@/lib/store';
 import { cn } from '@/lib/cn';
 import type { Room } from '@/lib/types';
 
@@ -33,6 +33,14 @@ export function RoomClient({ roomId }: { roomId: string }) {
   );
   const [copied, setCopied] = useState(false);
   const [inviting, setInviting] = useState(false);
+
+  /* The app-wide player follows you across navigations by design — it docks
+     into the corner and keeps going. That is exactly wrong here: arriving in a
+     room from a watch page meant hearing the same video twice, a couple of
+     seconds out of step. The room has its own player, so the page one stands
+     down at the door. */
+  const closePlayer = usePlayer((s) => s.close);
+  useEffect(() => { closePlayer(); }, [closePlayer]);
 
   useEffect(() => {
     if (!configured) return;

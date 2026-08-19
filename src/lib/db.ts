@@ -486,6 +486,7 @@ export async function createRoom(
   host: { uid: string; name: string; photo: string | null },
   video: Video,
   title?: string,
+  opts?: { startAt?: number },
 ): Promise<string> {
   const code = generateRoomCode();
   const ref = await addDoc(collection(store(), 'rooms'), {
@@ -496,8 +497,11 @@ export async function createRoom(
     videoId: video.id,
     videoTitle: video.title,
     videoThumbnail: video.thumbnailHq || video.thumbnail,
+    // A new room never starts playing. Everyone arrives at a different
+    // moment, and a video already running before the second person is even in
+    // the door is the opposite of watching together — the host presses play.
     playing: false,
-    positionSeconds: 0,
+    positionSeconds: Math.max(0, Math.floor(opts?.startAt ?? 0)),
     // Server-stamped: every participant measures elapsed time against the
     // same clock rather than their own.
     positionAtServerMs: Date.now(),
@@ -638,8 +642,9 @@ export async function syncRoomPlayback(
 export function watchRoomReactions(
   roomId: string,
   onChange: (reactions: RoomReaction[]) => void,
+  max = 30,
 ): Unsubscribe {
-  const q = query(collection(store(), 'rooms', roomId, 'reactions'), orderBy('at', 'desc'), qLimit(30));
+  const q = query(collection(store(), 'rooms', roomId, 'reactions'), orderBy('at', 'desc'), qLimit(max));
   return onSnapshot(q, (snap) => {
     onChange(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RoomReaction, 'id'>) })));
   });

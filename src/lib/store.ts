@@ -3,6 +3,7 @@
 import { create } from 'zustand';
 import type { Video } from './types';
 import type { CaptionTrack } from './player-modules';
+import type { Cue } from './captions';
 
 /* ==========================================================================
    Player store.
@@ -49,10 +50,22 @@ interface PlayerState {
   /** Render the embed at 1920x1080 and scale it down, so YouTube's adaptive
    *  streaming offers renditions above 720p. See PlayerHost for why. */
   highRes: boolean;
+  /** True when the viewer explicitly asked for the mini player. An inline slot
+   *  is only allowed to pull the player back out of the dock when this is
+   *  false — otherwise the first scroll after minimising undoes it, because
+   *  every slot measurement re-asserts inline mode. */
+  minimised: boolean;
+  /** Whether the control bar is currently on screen. The caption layer reads
+   *  this to lift itself clear of the bar instead of hiding behind it. */
+  controlsVisible: boolean;
+  /** Cues we render ourselves. Empty means YouTube is drawing its own — see
+   *  api/captions for why we would rather not let it. */
+  cues: Cue[];
 
   load(video: Video, opts?: { startAt?: number; queue?: Video[] }): void;
   setSlot(rect: Rect | null): void;
-  setMode(mode: PlayerMode): void;
+  /** `intent: 'user'` records a deliberate dock/undock, which survives scroll. */
+  setMode(mode: PlayerMode, intent?: 'user' | 'auto'): void;
   setPlaying(playing: boolean): void;
   setMuted(muted: boolean): void;
   setVolume(volume: number): void;
@@ -69,6 +82,8 @@ interface PlayerState {
   setCaptionTrack(code: string | null): void;
   setCaptionTracks(tracks: CaptionTrack[]): void;
   setHighRes(on: boolean): void;
+  setControlsVisible(visible: boolean): void;
+  setCues(cues: Cue[]): void;
   close(): void;
 }
 
@@ -93,6 +108,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   captionTrack: null,
   captionTracks: [],
   highRes: true,
+  minimised: false,
+  controlsVisible: true,
+  cues: [],
 
   load: (video, opts) =>
     set((s) => ({
@@ -105,22 +123,33 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       ready: false,
       playing: true,
       mode: s.slot ? 'inline' : 'docked',
+      // Loading something new is a fresh start; a dock from the last video
+      // must not swallow it.
+      minimised: false,
       // Renditions and caption tracks are per-video; carrying them over would
       // leave the settings menu describing the previous one.
       availableQualities: [],
       actualQuality: 'auto',
       captionTracks: [],
       captionTrack: null,
+      cues: [],
     })),
 
   setSlot: (slot) =>
     set((s) => {
       if (!s.video) return { slot };
       if (s.mode === 'theatre') return { slot };
+      // Deliberately minimised: the slot is still tracked (so restoring lands
+      // on the right rectangle) but it does not drag the player back inline.
+      if (s.minimised && slot) return { slot };
       return { slot, mode: slot ? 'inline' : 'docked' };
     }),
 
-  setMode: (mode) => set({ mode }),
+  setMode: (mode, intent = 'auto') =>
+    set((s) => ({
+      mode,
+      minimised: intent === 'user' ? mode === 'docked' : s.minimised,
+    })),
   setPlaying: (playing) => set({ playing }),
   setMuted: (muted) => set({ muted }),
   setVolume: (volume) => set({ volume: Math.min(100, Math.max(0, volume)), muted: volume === 0 }),
@@ -153,6 +182,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       actualQuality: 'auto',
       captionTracks: [],
       captionTrack: null,
+      cues: [],
     });
     return next;
   },
@@ -164,11 +194,14 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   setCaptionTrack: (captionTrack) => set({ captionTrack }),
   setCaptionTracks: (captionTracks) => set({ captionTracks }),
   setHighRes: (highRes) => set({ highRes }),
+  setControlsVisible: (controlsVisible) => set({ controlsVisible }),
+  setCues: (cues) => set({ cues }),
 
   close: () =>
     set({
       video: null, mode: 'hidden', playing: false, position: 0,
       duration: 0, buffered: 0, ready: false, queue: [], pendingSeek: null,
+      minimised: false, cues: [],
     }),
 }));
 

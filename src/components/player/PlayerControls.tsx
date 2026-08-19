@@ -20,6 +20,7 @@ import {
   activeCaptionTrack, applyQuality, availableQualities, getCaptionTracks,
   loadCaptionModule, preferredTrack, qualityLabel, setCaptionTrack as applyCaptionTrack,
 } from '@/lib/player-modules';
+import { fetchCues } from '@/lib/captions';
 
 /* ==========================================================================
    Control bar.
@@ -76,6 +77,8 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
   const setCaptionTrackState = usePlayer((s) => s.setCaptionTrack);
   const setCaptionTracks = usePlayer((s) => s.setCaptionTracks);
   const requestSeek = usePlayer((s) => s.requestSeek);
+  const setControlsVisible = usePlayer((s) => s.setControlsVisible);
+  const setCues = usePlayer((s) => s.setCues);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const [scrubbing, setScrubbing] = useState(false);
@@ -111,6 +114,14 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
     const t = setTimeout(() => setIdleAt(activity), HIDE_DELAY);
     return () => clearTimeout(t);
   }, [playing, scrubbing, menuOpen, activity]);
+
+  // The caption layer needs to know, so it can sit above the bar rather than
+  // behind it. Only the full bar reports — the dock's compact strip does not
+  // cover the caption line.
+  useEffect(() => {
+    if (compact) return;
+    setControlsVisible(visible);
+  }, [compact, visible, setControlsVisible]);
 
   /* ---------------------------- transport ------------------------------- */
 
@@ -201,6 +212,13 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
     return () => clearTimeout(t);
   }, [ready, video, api, refreshModules, setQuality]);
 
+  /* Choosing a track does two things at once.
+   *
+   *  YouTube is told about it, because that is the fallback: if we cannot get
+   *  hold of the cue text, its own captions stay on and behave as they always
+   *  did. In parallel we try to fetch the cues ourselves — and when that
+   *  works, YouTube's layer is switched back off and <CaptionOverlay> draws
+   *  them in the page, where we can keep them clear of the control bar. */
   const chooseCaptionTrack = useCallback((code: string | null) => {
     const p = api();
     if (!p) return;
@@ -210,7 +228,22 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
     }
     setCaptionTrackState(code);
     setPanel(null);
-  }, [api, setCaptionTrackState]);
+
+    setCues([]);
+    if (!code || !video) return;
+
+    const meta = captionTracks.find((t) => t.languageCode === code);
+    const forVideo = video.id;
+
+    fetchCues(forVideo, { languageCode: code, isAuto: meta?.isAuto }).then((cues) => {
+      const s = usePlayer.getState();
+      // The viewer may have switched video or track while this was in flight.
+      if (cues.length === 0 || s.video?.id !== forVideo || s.captionTrack !== code) return;
+      const live = api();
+      if (live) applyCaptionTrack(live, null);
+      s.setCues(cues);
+    });
+  }, [api, captionTracks, setCaptionTrackState, setCues, video]);
 
   /** The `C` shortcut and the CC button: flip between off and the best track. */
   const toggleCaptions = useCallback(() => {
@@ -273,7 +306,9 @@ export function PlayerControls({ api, compact, onExitTheatre }: Props) {
      Docking is the equivalent that genuinely works — the same iframe keeps
      playing, uninterrupted, in a corner. */
   const dock = useCallback(() => {
-    setMode(mode === 'docked' ? 'inline' : 'docked');
+    // Flagged as deliberate, so the next slot measurement (any scroll on the
+    // watch page) does not immediately pull the player back out of the dock.
+    setMode(mode === 'docked' ? 'inline' : 'docked', 'user');
   }, [mode, setMode]);
 
   const skipNext = useCallback(() => {

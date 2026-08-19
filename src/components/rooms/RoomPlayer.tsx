@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX } from 'lucide-react';
+import { Loader2, Pause, Play, RotateCcw, RotateCw } from 'lucide-react';
 
 import { loadYouTubeApi, PlayerState, type YTPlayer } from '@/hooks/useYouTubeApi';
 import { advanceRoomQueue, setBuffering, syncRoomPlayback } from '@/lib/db';
@@ -9,6 +9,8 @@ import { serverClock } from '@/lib/server-clock';
 import { formatDuration } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { RoomReactions } from './RoomReactions';
+import { RoomViewerControls } from './RoomViewerControls';
+import { ReactionRibbon } from './ReactionRibbon';
 import type { Room } from '@/lib/types';
 
 /* ==========================================================================
@@ -57,6 +59,14 @@ const HEARTBEAT_MS = 3000;
 /** How long a stall must last before the room is told about it. */
 const STALL_MS = 900;
 
+/* The embed picks its rendition from the size of its *own* window, not from
+   how large it looks on screen — so a 900px-wide iframe is never offered more
+   than 720p. Giving it a real 1920x1080 box and scaling that down visually is
+   what makes the quality selector able to reach 1080p and above. Same trick as
+   the main player; see PlayerHost for the long version. */
+const VIRTUAL_WIDTH = 1920;
+const VIRTUAL_HEIGHT = 1080;
+
 interface Props {
   room: Room;
   isHost: boolean;
@@ -85,6 +95,8 @@ export function RoomPlayer({ room, isHost, uid, name }: Props) {
   }, []);
 
   const mountRef = useRef<HTMLDivElement>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const loadedId = useRef<string | null>(null);
   const settleUntil = useRef(0);
@@ -100,10 +112,13 @@ export function RoomPlayer({ room, isHost, uid, name }: Props) {
   const [playing, setPlaying] = useState(room.playing);
   const [position, setPosition] = useState(room.positionSeconds);
   const [duration, setDuration] = useState(0);
-  const [muted, setMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Live drift in seconds, for the accuracy read-out. */
   const [drift, setDrift] = useState(0);
+  /** Size of the visible stage, for scaling and centring the oversized
+   *  surface. Both axes matter: in fullscreen the stage is the shape of the
+   *  screen, which is rarely 16:9. */
+  const [stage, setStage] = useState({ width: 0, height: 0 });
 
   /** Where the host believes playback is, right now, on the shared clock. */
   const projected = useCallback(() => {
@@ -143,6 +158,18 @@ export function RoomPlayer({ room, isHost, uid, name }: Props) {
   useEffect(() => () => {
     if (announcedStall.current) setBuffering(room.id, uid, false).catch(() => {});
   }, [room.id, uid]);
+
+  // Measured rather than assumed: the stage is a different size inline, in a
+  // narrow column and in fullscreen, and the scale has to follow all three.
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      setStage({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   /* ---------------------------- bootstrap ------------------------------- */
 
@@ -406,20 +433,39 @@ export function RoomPlayer({ room, isHost, uid, name }: Props) {
     publish({ positionSeconds: target });
   };
 
-  const toggleMute = () => {
-    const p = playerRef.current;
-    if (!p) return;
-    if (muted) { p.unMute(); setMuted(false); } else { p.mute(); setMuted(true); }
-  };
+  const api = useCallback(() => playerRef.current, []);
 
   const pct = duration > 0 ? (position / duration) * 100 : 0;
   const driftMs = follows ? Math.round(Math.abs(drift) * 1000) : 0;
   const locked = follows && driftMs <= 120;
 
+  /* Fit a 1920x1080 surface inside the stage. Below 1:1 the embed needs the
+     oversize trick to be offered anything above 720p; at or beyond it the
+     frame is already large enough natively, and scaling would only cost
+     sharpness, so the surface just fills the box instead. */
+  const fit = stage.width > 0 && stage.height > 0
+    ? Math.min(stage.width / VIRTUAL_WIDTH, stage.height / VIRTUAL_HEIGHT)
+    : 0;
+  const oversized = fit > 0 && fit < 1;
+  const surface = oversized
+    ? {
+        width: VIRTUAL_WIDTH,
+        height: VIRTUAL_HEIGHT,
+        transform: `translate(${(stage.width - VIRTUAL_WIDTH * fit) / 2}px, ${(stage.height - VIRTUAL_HEIGHT * fit) / 2}px) scale(${fit})`,
+      }
+    : { width: '100%', height: '100%' };
+
   return (
-    <div className="overflow-hidden rounded-2xl border border-line bg-black">
-      <div className="relative aspect-video w-full">
-        <div ref={mountRef} className="absolute inset-0 [&_iframe]:h-full [&_iframe]:w-full [&_iframe]:border-0" />
+    <div
+      ref={shellRef}
+      className="room-player flex flex-col overflow-hidden rounded-2xl border border-line bg-black"
+    >
+      <div ref={stageRef} className="room-stage relative aspect-video w-full overflow-hidden">
+        <div
+          ref={mountRef}
+          className="pointer-events-none absolute left-0 top-0 origin-top-left [&_iframe]:h-full [&_iframe]:w-full [&_iframe]:border-0"
+          style={surface}
+        />
 
         {!ready && !error && (
           <div className="absolute inset-0 grid place-items-center bg-ink-900">
@@ -432,10 +478,9 @@ export function RoomPlayer({ room, isHost, uid, name }: Props) {
           </div>
         )}
 
-        {/* Guests get a transparent shield while the host is driving: a stray
-            click on the embed would desync them from everyone else. With host
-            control off it comes away and everyone drives their own. */}
-        {follows && <div className="absolute inset-0" aria-hidden />}
+        {/* The embed itself never takes clicks — our own controls are the only
+            way to drive it, which is also what keeps a guest from desyncing
+            everybody with a stray click on YouTube's invisible chrome. */}
 
         {/* Waiting for somebody is the one thing worth interrupting the video
             for — otherwise nobody understands why it stopped. */}
@@ -473,6 +518,19 @@ export function RoomPlayer({ room, isHost, uid, name }: Props) {
           <div className="h-full rounded-full bg-flare transition-[width] duration-200" style={{ width: `${pct}%` }} />
         </div>
 
+        <ReactionRibbon
+          roomId={room.id}
+          duration={duration}
+          onSeek={canDrive ? (seconds) => {
+            const p = playerRef.current;
+            if (!p) return;
+            p.seekTo(seconds, true);
+            settleUntil.current = Date.now() + SETTLE_MS;
+            setPosition(seconds);
+            publish({ positionSeconds: seconds });
+          } : undefined}
+        />
+
         <div className="mt-2.5 flex items-center gap-1">
           <Btn onClick={toggle} disabled={!canDrive} synced={synced}
             label={playing ? (synced ? 'Pause for everyone' : 'Pause') : (synced ? 'Play for everyone' : 'Play')}>
@@ -484,18 +542,26 @@ export function RoomPlayer({ room, isHost, uid, name }: Props) {
           <Btn onClick={() => nudge(10)} disabled={!canDrive} synced={synced} label="Forward 10 seconds">
             <RotateCw className="h-4 w-4" />
           </Btn>
-          <Btn onClick={toggleMute} synced={synced} label={muted ? 'Unmute' : 'Mute'}>
-            {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-          </Btn>
-
           <span className="ml-2 font-mono text-[11.5px] text-cream-dim tnum">
             {formatDuration(position)}<span className="mx-1 text-faint">/</span>
             <span className="text-faint">{formatDuration(duration)}</span>
           </span>
 
+          {/* Volume, subtitles, rendition and fullscreen belong to whoever is
+              watching, host or not — none of them are things the rest of the
+              room can feel. Only the transport above is shared. */}
+          <div className="ml-auto flex items-center gap-1">
+            <RoomViewerControls
+              api={api}
+              ready={ready}
+              surfaceRef={shellRef}
+              videoId={room.videoId}
+            />
+          </div>
+
           {/* The sync read-out. Drift is the one number that says whether this
               is actually working, so it is on screen rather than in a log. */}
-          <span className="ml-auto flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em]">
+          <span className="ml-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em]">
             {follows ? (
               <>
                 <span

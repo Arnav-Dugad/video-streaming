@@ -30,6 +30,7 @@ export function WatchActions({ video, channel }: { video: Video; channel: Channe
   // actually playing, and only once it is far enough in to be worth pointing at.
   const position = usePlayer((s) => s.position);
   const isCurrent = usePlayer((s) => s.video?.id === video.id);
+  const closePlayer = usePlayer((s) => s.close);
 
   const [flags, setFlags] = useState({ liked: false, saved: false, subscribed: false });
   const [copied, setCopied] = useState(false);
@@ -106,17 +107,30 @@ export function WatchActions({ video, channel }: { video: Video; channel: Channe
     } catch { /* dismissed, or clipboard blocked */ }
   };
 
+  /* Watch together.
+   *
+   *  Three things used to go wrong here. The room opened at zero even when you
+   *  were forty minutes in; the page navigated before the room existed, so a
+   *  slow write left you on a room that was still being created; and the
+   *  global player kept running — it docks on navigation by design — so you
+   *  arrived in the room hearing the same video twice, a couple of seconds
+   *  apart. The room carries the video now, so the page player hands over. */
   const startRoom = async () => {
     if (!requireAuth()) return;
+    if (busy) return;
     setBusy(true);
     try {
       const id = await createRoom(
         { uid: user!.uid, name: user!.displayName ?? 'Host', photo: user!.photoURL },
         video,
+        undefined,
+        { startAt: isCurrent ? position : 0 },
       );
+      closePlayer();
       router.push(`/rooms/${id}`);
     } catch {
       toast('Could not open a room', { tone: 'error' });
+    } finally {
       setBusy(false);
     }
   };

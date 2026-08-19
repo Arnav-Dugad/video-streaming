@@ -15,6 +15,7 @@ import { useAmbientPalette } from '@/hooks/useAmbientPalette';
 import { usePreferences } from '@/hooks/usePreferences';
 import { PlayerControls } from './PlayerControls';
 import { AutoplayNext } from './AutoplayNext';
+import { CaptionOverlay } from './CaptionOverlay';
 import { cn } from '@/lib/cn';
 
 /* ==========================================================================
@@ -227,6 +228,19 @@ export function PlayerHost() {
 
   const api = useCallback(() => playerRef.current, []);
 
+  /* Leaving the mini player. When the page underneath already has a slot —
+     you minimised while still on the watch page — this is a mode change, not a
+     navigation: pushing the URL you are already on is a no-op, which is why
+     Expand appeared to do nothing. Only navigate when there is nowhere on this
+     page for the player to land. */
+  const expand = useCallback(() => {
+    if (usePlayer.getState().slot) {
+      setMode('inline', 'user');
+      return;
+    }
+    router.push(`/watch?v=${video?.id ?? ''}`);
+  }, [router, setMode, video?.id]);
+
   /* ------------------------- player lifecycle --------------------------- */
 
   useEffect(() => {
@@ -314,6 +328,30 @@ export function PlayerHost() {
     positioned.current = false;
     if (mountRef.current) mountRef.current.innerHTML = '';
   }, [video]);
+
+  /* ---------------------------- seek requests --------------------------- */
+
+  /* `pendingSeek` used to be read in exactly two places, both at load time —
+     so asking the *already playing* video to jump (a chapter, a timestamp in
+     the description, the scrubber) set the field and nothing ever consumed it.
+     Chapters looked inert for that reason. This drains the request whenever
+     one appears against a player that is already up. */
+  const pendingSeek = usePlayer((s) => s.pendingSeek);
+
+  useEffect(() => {
+    if (pendingSeek === null) return;
+    const p = playerRef.current;
+    // No player yet: leave it for the load path, which passes it as startSeconds.
+    if (!p?.seekTo || currentId.current !== video?.id) return;
+
+    usePlayer.getState().consumeSeek();
+    try {
+      p.seekTo(pendingSeek, true);
+      // A jump made while paused should show the destination frame rather than
+      // sitting on the old one.
+      if (usePlayer.getState().playing) p.playVideo();
+    } catch { /* player torn down between render and effect */ }
+  }, [pendingSeek, video?.id]);
 
   /* --------------------------- progress loop ---------------------------- */
 
@@ -455,6 +493,8 @@ export function PlayerHost() {
           />
         </div>
 
+        <CaptionOverlay compact={docked} />
+
         {apiError?.videoId === video.id && (
           <div className="absolute inset-0 z-20 grid place-items-center bg-ink-900/95 p-6 text-center">
             <div className="max-w-sm">
@@ -496,7 +536,7 @@ export function PlayerHost() {
                 {video.title}
               </p>
               <div className="flex shrink-0 gap-1">
-                <DockButton label="Expand" onClick={() => router.push(`/watch?v=${video.id}`)}>
+                <DockButton label="Expand" onClick={expand}>
                   <Maximize2 className="h-3.5 w-3.5" />
                 </DockButton>
                 <DockButton label="Close player" onClick={close}>
