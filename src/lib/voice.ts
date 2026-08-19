@@ -146,6 +146,10 @@ export interface VoicePeer {
    *  separates "nothing is arriving" from "it arrives and this device will not
    *  play it" — two problems that look identical and share no fix. */
   inboundBytes: number;
+  /** Bitrate of their incoming audio. Cumulative bytes cannot tell speech
+   *  from silence — Opus keeps sending comfort noise when nobody is talking —
+   *  but the rate can: silence sits near 1 kbps, speech near 30. */
+  inboundKbps: number;
   /** Whether the element carrying their audio is actually running. */
   playing: boolean;
 }
@@ -179,6 +183,9 @@ interface Peer {
   startedAt: number;
   attempts: number;
   inboundBytes: number;
+  inboundKbps: number;
+  lastBytes: number;
+  lastSampleAt: number;
 }
 
 /** Turns a signalling error into something a person can act on. Exported
@@ -211,10 +218,13 @@ export class VoiceMesh {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private statsTimer: ReturnType<typeof setInterval> | null = null;
   private session = Math.random().toString(36).slice(2, 10);
+  private deviceId: string | null = null;
   private stopped = false;
   private anySpeaking = false;
   private muted = false;
   private playbackBlocked = false;
+  /** Peak level the encoder saw, from the connection's own statistics. */
+  private outgoingLevel = 0;
 
   constructor(
     private uid: string,
@@ -227,10 +237,7 @@ export class VoiceMesh {
   async start(): Promise<void> {
     // Asking for the microphone first means a refusal costs nothing: no
     // presence is published, so nobody sees a participant who never arrives.
-    this.local = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      video: false,
-    });
+    this.local = await navigator.mediaDevices.getUserMedia({ audio: this.constraints(), video: false });
 
     if (this.stopped) { this.releaseLocal(); return; }
 
@@ -332,6 +339,69 @@ export class VoiceMesh {
     );
   }
 
+  private constraints(): MediaTrackConstraints {
+    return {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      // `exact` rather than a preference: silently falling back to the default
+      // device would make choosing one look like it had worked when it had not.
+      ...(this.deviceId ? { deviceId: { exact: this.deviceId } } : {}),
+    };
+  }
+
+  /* A laptop typically offers several inputs, and Windows in particular likes
+     to default to an array that is muted in the OS or pointed at nothing. The
+     browser's own picker is buried; this one is not. */
+  static async listInputs(): Promise<{ id: string; label: string }[]> {
+    if (!navigator.mediaDevices?.enumerateDevices) return [];
+    const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+    return devices
+      .filter((d) => d.kind === 'audioinput')
+      // Labels are empty until permission has been granted at least once.
+      .map((d, i) => ({ id: d.deviceId, label: d.label || `Microphone ${i + 1}` }));
+  }
+
+  /** Switches microphone without dropping the call: the outgoing track is
+   *  replaced on every existing connection rather than renegotiated. */
+  async setInputDevice(deviceId: string | null): Promise<void> {
+    this.deviceId = deviceId;
+
+    const next = await navigator.mediaDevices.getUserMedia({ audio: this.constraints(), video: false });
+    if (this.stopped) { for (const t of next.getTracks()) t.stop(); return; }
+
+    const track = next.getAudioTracks()[0];
+    if (!track) return;
+    track.enabled = !this.muted;
+
+    await Promise.all([...this.peers.values()].map(async (peer) => {
+      const sender = peer.pc.getSenders().find((snd) => snd.track?.kind === 'audio');
+      // replaceTrack does not touch the session description, so nobody has to
+      // renegotiate and nothing goes quiet while the swap happens.
+      await sender?.replaceTrack(track).catch(() => {});
+    }));
+
+    this.releaseLocal();
+    this.local = next;
+
+    // The local meter has to follow the device it is supposed to be metering.
+    try { this.selfSource?.disconnect(); } catch { /* already gone */ }
+    this.selfSource = null;
+    this.selfAnalyser = null;
+    try {
+      const { analyser, source } = this.analyserFor(next);
+      this.selfAnalyser = analyser;
+      this.selfSource = source;
+    } catch { /* metering is decoration */ }
+  }
+
+  /** What the far end is actually being sent, according to the connection's
+   *  own statistics rather than a local meter that might be watching a
+   *  different device. */
+  get micLevel(): number {
+    return this.outgoingLevel;
+  }
+
   /** Called from a real tap. Retries every element and resumes the audio
    *  graph, which is the only thing a phone will accept once it has refused. */
   resumePlayback(): void {
@@ -431,7 +501,8 @@ export class VoiceMesh {
     const peer: Peer = {
       pc, audio, queued: [], status: 'connecting', speaking: false,
       lastVoice: 0, level: 0, muted, session,
-      startedAt: Date.now(), attempts, inboundBytes: 0,
+      startedAt: Date.now(), attempts,
+      inboundBytes: 0, inboundKbps: 0, lastBytes: 0, lastSampleAt: 0,
     };
     this.peers.set(uid, peer);
 
@@ -603,17 +674,39 @@ export class VoiceMesh {
     for (const [uid, peer] of this.peers) {
       peer.pc.getStats().then((report) => {
         if (this.peers.get(uid) !== peer) return;
+
         let bytes = 0;
+        let sending = -1;
+
         report.forEach((entry) => {
-          const stat = entry as { type?: string; kind?: string; bytesReceived?: number };
+          const stat = entry as {
+            type?: string; kind?: string;
+            bytesReceived?: number; audioLevel?: number;
+          };
           if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
             bytes = Math.max(bytes, stat.bytesReceived ?? 0);
           }
+          /* What the encoder is actually being handed. This is the honest
+             answer to "is my microphone picking anything up" — the local
+             analyser can be reading a device that is not the one being sent,
+             but `media-source` is by definition the track on the wire. */
+          if (stat.type === 'media-source' && stat.kind === 'audio') {
+            sending = Math.max(sending, stat.audioLevel ?? 0);
+          }
         });
-        if (bytes !== peer.inboundBytes) {
-          peer.inboundBytes = bytes;
-          this.publish();
+
+        const now = Date.now();
+        if (peer.lastSampleAt > 0 && now > peer.lastSampleAt) {
+          const seconds = (now - peer.lastSampleAt) / 1000;
+          peer.inboundKbps = Math.max(0, ((bytes - peer.lastBytes) * 8) / 1000 / seconds);
         }
+        peer.lastBytes = bytes;
+        peer.lastSampleAt = now;
+        peer.inboundBytes = bytes;
+
+        if (sending >= 0) this.outgoingLevel = sending;
+
+        this.publish();
       }).catch(() => { /* the connection went away mid-read */ });
     }
   }
@@ -734,6 +827,7 @@ export class VoiceMesh {
       muted: p.muted,
       attempts: p.attempts,
       inboundBytes: p.inboundBytes,
+      inboundKbps: p.inboundKbps,
       playing: !p.audio.paused && p.audio.readyState > 0,
       detail: `${p.pc.connectionState}/${p.pc.iceConnectionState}${this.isCaller(uid) ? ' · calling' : ' · answering'}`,
     })));

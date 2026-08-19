@@ -29,6 +29,12 @@ import type { Room } from '@/lib/types';
    call with a film playing somewhere behind it.
    ========================================================================== */
 
+/* Opus with discontinuous transmission drops to roughly 1-3 kbps when nobody
+   is talking and climbs to twenty-something when somebody is. Anything above
+   this is somebody's voice; anything below is an open microphone in a quiet
+   room — or one that is not picking up at all. */
+const SPEECH_KBPS = 5;
+
 interface Props {
   room: Room;
   uid: string;
@@ -46,6 +52,10 @@ export function VoiceRail({ room, uid }: Props) {
   const [blocked, setBlocked] = useState(false);
   const [tone, setTone] = useState<CheckResult | null>(null);
   const [toning, setToning] = useState(false);
+  const [inputs, setInputs] = useState<{ id: string; label: string }[]>([]);
+  const [inputId, setInputId] = useState<string>('');
+  /** What the encoder is actually being handed, polled from the connection. */
+  const [micLevel, setMicLevel] = useState(0);
 
   const mesh = useRef<VoiceMesh | null>(null);
   const setActive = useVoiceUi((s) => s.setActive);
@@ -128,6 +138,33 @@ export function VoiceRail({ room, uid }: Props) {
       toast((err as Error).message || 'The self-test could not run', { tone: 'error' });
     } finally {
       setTesting(false);
+    }
+  };
+
+  /* The local analyser and the connection's own `media-source` level can
+     disagree — the analyser watches whatever device it was handed, the
+     statistic describes the track actually on the wire. When somebody says
+     "my mic is not being picked up", the second one is the answer. */
+  useEffect(() => {
+    if (state !== 'on') return;
+    const id = setInterval(() => setMicLevel(mesh.current?.micLevel ?? 0), 500);
+    return () => clearInterval(id);
+  }, [state]);
+
+  useEffect(() => {
+    if (state !== 'on') return;
+    // Labels are only populated once permission has been granted, so this is
+    // read after joining rather than before.
+    VoiceMesh.listInputs().then(setInputs).catch(() => {});
+  }, [state]);
+
+  const chooseInput = async (id: string) => {
+    setInputId(id);
+    try {
+      await mesh.current?.setInputDevice(id || null);
+      toast('Microphone switched');
+    } catch {
+      toast('That microphone could not be opened', { tone: 'error' });
     }
   };
 
@@ -256,6 +293,44 @@ export function VoiceRail({ room, uid }: Props) {
           </motion.p>
         )}
       </AnimatePresence>
+
+      {/* Is this machine sending anything? The bar answers it without anybody
+          having to ask the other end. */}
+      {state === 'on' && (
+        <div className="mt-2.5 flex flex-wrap items-center gap-3">
+          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-faint">Your mic</span>
+
+          <span className="relative h-1.5 w-32 overflow-hidden rounded-full bg-cream/10">
+            <span
+              className={cn(
+                'absolute inset-y-0 left-0 rounded-full transition-[width,background-color] duration-150',
+                micLevel > 0.02 ? 'bg-mint' : 'bg-cream/20',
+              )}
+              // Speech sits well below 1.0, so the scale is expanded to make
+              // ordinary talking fill most of the bar rather than a stub.
+              style={{ width: `${Math.min(100, micLevel * 320)}%` }}
+            />
+          </span>
+
+          <span className="font-mono text-[10.5px] text-faint tnum">
+            {muted ? 'muted' : micLevel > 0.02 ? 'picking you up' : 'silent'}
+          </span>
+
+          {inputs.length > 1 && (
+            <select
+              value={inputId}
+              onChange={(e) => chooseInput(e.target.value)}
+              aria-label="Microphone"
+              className="ml-auto h-8 max-w-[14rem] rounded-lg border border-line bg-ink-850 px-2 text-[11.5px] text-cream-dim outline-none transition-colors focus:border-flare/60"
+            >
+              <option value="">Default microphone</option>
+              {inputs.map((d) => (
+                <option key={d.id} value={d.id}>{d.label}</option>
+              ))}
+            </select>
+          )}
+        </div>
+      )}
 
       {/* Autoplay policy will not be argued with, only tapped. A phone that
           refuses incoming audio produces a perfect connection with silence
@@ -427,6 +502,13 @@ export function VoiceRail({ room, uid }: Props) {
                         media problem, and they share no fix. */}
                     <span className={p.inboundBytes > 0 ? 'text-mint' : 'text-flare'}>
                       · {p.inboundBytes > 0 ? `${(p.inboundBytes / 1024).toFixed(1)} kB in` : 'no audio in'}
+                    </span>
+                    {/* The rate, not the total: silence still sends comfort
+                        noise, so only the bitrate separates somebody talking
+                        from somebody whose microphone is dead. */}
+                    <span className={p.inboundKbps > SPEECH_KBPS ? 'text-mint' : 'text-muted'}>
+                      · {p.inboundKbps.toFixed(1)} kbps
+                      {p.inboundKbps > SPEECH_KBPS ? ' carrying speech' : ' near silence'}
                     </span>
                     {p.inboundBytes > 0 && !p.playing && (
                       <span className="text-flare">· not playing</span>
